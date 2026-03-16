@@ -10,7 +10,8 @@ import {
   Alert,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { Transaction, addTransaction, updateTransaction, getCategories, Category } from '../lib/database';
+import { Transaction, addTransaction, updateTransaction, getCategories, addCategory, Category } from '../lib/database';
+import CategoryForm from './CategoryForm';
 
 interface Props {
   visible: boolean;
@@ -29,11 +30,17 @@ export default function AddTransactionModal({ visible, onClose, onSaved, editTra
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [bank, setBank] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
+  const [showNewCat, setShowNewCat] = useState(false);
+
+  const loadCategories = () => {
+    const cats = getCategories();
+    setCategories(cats);
+    return cats;
+  };
 
   useEffect(() => {
     if (visible) {
-      const cats = getCategories();
-      setCategories(cats);
+      const cats = loadCategories();
       if (editTransaction) {
         setAmount(editTransaction.amount.toString());
         setType(editTransaction.type);
@@ -51,6 +58,7 @@ export default function AddTransactionModal({ visible, onClose, onSaved, editTra
         setDate(new Date().toISOString().slice(0, 10));
         setBank('');
       }
+      setShowNewCat(false);
     }
   }, [visible, editTransaction]);
 
@@ -66,26 +74,33 @@ export default function AddTransactionModal({ visible, onClose, onSaved, editTra
     }
 
     const tx = { amount: amt, type, category, description, note, date, bank };
-
     if (editTransaction) {
       updateTransaction(editTransaction.id, tx);
     } else {
       addTransaction(tx);
     }
-
     onSaved();
     onClose();
   };
+
+  const handleCreateCategory = (name: string, icon: string, color: string) => {
+    addCategory({ name, icon, color, isDefault: false });
+    const cats = loadCategories();
+    setCategory(name);
+    setShowNewCat(false);
+  };
+
+  const selectedCat = categories.find(c => c.name === category);
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={onClose}>
-            <Feather name="x" size={24} color="#374151" />
+          <TouchableOpacity onPress={onClose} style={styles.headerBtn}>
+            <Feather name="x" size={22} color="#374151" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{editTransaction ? 'Edit Transaction' : 'Add Transaction'}</Text>
-          <TouchableOpacity onPress={handleSave}>
+          <TouchableOpacity onPress={handleSave} style={styles.headerBtn}>
             <Text style={styles.saveBtn}>Save</Text>
           </TouchableOpacity>
         </View>
@@ -96,14 +111,14 @@ export default function AddTransactionModal({ visible, onClose, onSaved, editTra
               style={[styles.typeBtn, type === 'debit' && styles.typeBtnDebitActive]}
               onPress={() => setType('debit')}
             >
-              <Feather name="arrow-up" size={16} color={type === 'debit' ? '#FFFFFF' : '#EF4444'} />
+              <Feather name="arrow-up-right" size={16} color={type === 'debit' ? '#FFFFFF' : '#EF4444'} />
               <Text style={[styles.typeBtnText, type === 'debit' && styles.typeBtnTextActive]}>Debit</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.typeBtn, type === 'credit' && styles.typeBtnCreditActive]}
               onPress={() => setType('credit')}
             >
-              <Feather name="arrow-down" size={16} color={type === 'credit' ? '#FFFFFF' : '#10B981'} />
+              <Feather name="arrow-down-left" size={16} color={type === 'credit' ? '#FFFFFF' : '#10B981'} />
               <Text style={[styles.typeBtnText, type === 'credit' && styles.typeBtnTextActive]}>Credit</Text>
             </TouchableOpacity>
           </View>
@@ -117,25 +132,53 @@ export default function AddTransactionModal({ visible, onClose, onSaved, editTra
               placeholder="0.00"
               keyboardType="decimal-pad"
               placeholderTextColor="#9CA3AF"
+              autoFocus={!editTransaction}
             />
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Category</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
-              {categories.map(cat => (
-                <TouchableOpacity
-                  key={cat.id}
-                  style={[styles.chip, category === cat.name && { backgroundColor: cat.color }]}
-                  onPress={() => setCategory(cat.name)}
-                >
-                  <Feather name={cat.icon as any} size={14} color={category === cat.name ? '#FFFFFF' : cat.color} />
-                  <Text style={[styles.chipText, category === cat.name && styles.chipTextActive]}>
-                    {cat.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <View style={styles.fieldLabelRow}>
+              <Text style={styles.fieldLabel}>Category</Text>
+              <TouchableOpacity
+                style={styles.newCatBtn}
+                onPress={() => setShowNewCat(!showNewCat)}
+              >
+                <Feather name={showNewCat ? 'chevron-up' : 'plus'} size={13} color="#6366F1" />
+                <Text style={styles.newCatBtnText}>{showNewCat ? 'Cancel' : 'New'}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {showNewCat ? (
+              <View style={styles.inlineForm}>
+                <CategoryForm
+                  onSave={handleCreateCategory}
+                  onCancel={() => setShowNewCat(false)}
+                  saveLabel="Create & Select"
+                />
+              </View>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+                {categories.map(cat => (
+                  <TouchableOpacity
+                    key={cat.id}
+                    style={[
+                      styles.chip,
+                      category === cat.name && { backgroundColor: cat.color, borderColor: cat.color },
+                    ]}
+                    onPress={() => setCategory(cat.name)}
+                  >
+                    <Feather
+                      name={cat.icon as any}
+                      size={13}
+                      color={category === cat.name ? '#FFFFFF' : cat.color}
+                    />
+                    <Text style={[styles.chipText, category === cat.name && styles.chipTextActive]}>
+                      {cat.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
           </View>
 
           <View style={styles.field}>
@@ -152,7 +195,7 @@ export default function AddTransactionModal({ visible, onClose, onSaved, editTra
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>Note (optional)</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { minHeight: 70, textAlignVertical: 'top' }]}
               value={note}
               onChangeText={setNote}
               placeholder="Add a note..."
@@ -193,6 +236,7 @@ export default function AddTransactionModal({ visible, onClose, onSaved, editTra
               placeholderTextColor="#9CA3AF"
             />
           </View>
+          <View style={{ height: 32 }} />
         </ScrollView>
       </View>
     </Modal>
@@ -205,20 +249,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
   },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
-  saveBtn: { fontSize: 16, fontWeight: '600', color: '#6366F1' },
+  headerBtn: { padding: 4 },
+  headerTitle: { fontSize: 17, fontWeight: '700', color: '#111827' },
+  saveBtn: { fontSize: 16, fontWeight: '700', color: '#6366F1' },
   form: { flex: 1, padding: 16 },
-  typeToggle: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
-  },
+  typeToggle: { flexDirection: 'row', gap: 12, marginBottom: 16 },
   typeBtn: {
     flex: 1,
     flexDirection: 'row',
@@ -226,9 +267,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     paddingVertical: 12,
-    borderRadius: 10,
+    borderRadius: 12,
     backgroundColor: '#F3F4F6',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#E5E7EB',
   },
   typeBtnDebitActive: { backgroundColor: '#EF4444', borderColor: '#EF4444' },
@@ -239,16 +280,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 16,
-    marginBottom: 16,
+    marginBottom: 20,
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+  },
+  amountSymbol: { fontSize: 28, fontWeight: '700', color: '#9CA3AF', marginRight: 8 },
+  amountInput: { flex: 1, fontSize: 36, fontWeight: '700', color: '#111827', paddingVertical: 14 },
+  field: { marginBottom: 18 },
+  fieldLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  fieldLabel: { fontSize: 12, fontWeight: '700', color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.6 },
+  newCatBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  newCatBtnText: { fontSize: 12, fontWeight: '600', color: '#6366F1' },
+  inlineForm: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#E5E7EB',
   },
-  amountSymbol: { fontSize: 28, fontWeight: '700', color: '#374151', marginRight: 8 },
-  amountInput: { flex: 1, fontSize: 32, fontWeight: '700', color: '#111827', paddingVertical: 16 },
-  field: { marginBottom: 16 },
-  fieldLabel: { fontSize: 13, fontWeight: '600', color: '#6B7280', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
   input: {
     backgroundColor: '#FFFFFF',
     borderRadius: 10,
@@ -263,13 +322,13 @@ const styles = StyleSheet.create({
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 5,
     paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingVertical: 8,
     borderRadius: 20,
     backgroundColor: '#F3F4F6',
     marginRight: 8,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#E5E7EB',
   },
   chipActive: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
