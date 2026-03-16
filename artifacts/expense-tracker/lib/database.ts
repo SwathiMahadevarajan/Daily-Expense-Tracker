@@ -165,6 +165,15 @@ export function deleteTransaction(id: number) {
   db.runSync(`DELETE FROM transactions WHERE id=?`, [id]);
 }
 
+export function deleteTransactionBySmsId(smsId: string) {
+  if (Platform.OS === 'web') {
+    webStore.transactions = webStore.transactions.filter(t => t.smsId !== smsId);
+    return;
+  }
+  const db = getDb();
+  db.runSync(`DELETE FROM transactions WHERE smsId=?`, [smsId]);
+}
+
 export function getImportedSmsIds(): Set<string> {
   if (Platform.OS === 'web') return new Set();
   const db = getDb();
