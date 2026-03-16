@@ -1,0 +1,83 @@
+Project: Personal Expense Tracker — React Native (Expo) Mobile App
+
+Build a personal expense tracker mobile app for Android (and iOS) using Expo (SDK 54) + React Native with Expo Router (tab-based navigation). All data is stored on-device only — no backend, no external services, no accounts required.
+
+Core Tech Stack
+
+    Expo SDK 54, React Native, TypeScript
+    expo-router (file-based tabs: Home, Analytics, All Transactions, Settings)
+    expo-sqlite for on-device transaction + category storage
+    AsyncStorage for payment sources and reminder settings
+    expo-notifications for local scheduled reminders (dynamic import to avoid Expo Go SDK 53 crash)
+    react-native-get-sms-android for SMS parsing (native build only)
+    @expo/vector-icons (Feather icons only — validate all icon names before use)
+    EAS Build configured (eas.json) with a preview profile outputting a direct-install APK
+
+Features
+
+Home Screen
+
+    Month navigator (prev/next arrows, slide animation) showing current month's Spent / Received / Net
+    Summary chips: Daily Avg, Transaction Count, vs-last-month % change
+    Transaction list grouped by date; tap to view/edit/delete
+    Floating "+ Add" button opens AddTransactionModal
+
+AddTransactionModal
+
+    Fields: Amount, Type (debit/credit toggle), Category (picker), Description, Note, Date, Bank/Source
+    Bank/Source shown as quick-pick chips pulled from Payment Sources
+    Manual entry; saves to SQLite
+
+SMS Import (Android native build only)
+
+    User taps "Import SMS" button — NOT automatic on message receipt
+    Requests READ_SMS permission via PermissionsAndroid.request() with a clear explanation dialog
+    Reads up to 1000 inbox messages, processes in chunks of 50 (live progress UI)
+    Identifies bank SMS by: (a) known DLT sender ID fragments (VM-HDFCBK, AD-SBIINB, VK-ICICI, etc.) OR (b) body containing ≥2 signal words (debited, credited, INR, UPI, IMPS, etc.)
+    Skips OTP / promotional / non-financial messages automatically
+    Parses from each message: Amount (handles Rs./INR/₹ formats), Type (debit/credit via keyword scoring), Bank (mapped from sender ID), Merchant/Payee (UPI ID or "at X"), Date (SMS timestamp)
+    Deduplication: each SMS has a unique Android sms.id stored in the DB; already-imported messages show dimmed with "Imported" badge and are pre-deselected
+    Visual scanning progress: animated progress bar + live counters (SMS Read / Bank SMS / Transactions Found)
+    In Expo Go: shows a clear message that SMS import requires the full APK build
+
+Analytics Screen
+
+    Separate month/year navigator
+    Month-over-month comparison card
+    Spending insights (top categories, trends)
+    Yearly category heatmap
+
+Categories
+
+    Default categories: Food & Dining (coffee icon), Transport (truck), Shopping (shopping-bag), Bills (zap), Entertainment (film), Health (heart), Groceries (package), Education (book), Travel (map-pin), Income (trending-up), Other (more-horizontal)
+    Full CRUD: add, edit, delete custom categories with Feather icon picker and color picker
+    DB migration on startup fixes any old invalid icon names (utensils→coffee, car→truck)
+
+Payment Sources
+
+    Stored in AsyncStorage (not SQLite)
+    Default 8 sources: Google Pay, PhonePe, Paytm, Cash, SBI, HDFC, ICICI, Axis
+    Full CRUD in Settings screen
+    Appear as tappable chips in the Add Transaction bank/source field
+
+Evening Reminder
+
+    Toggle + time picker in Settings
+    Schedules a local daily notification via expo-notifications
+    Works on real device builds only (iOS + Android); gracefully disabled on web/Expo Go
+    Persists enabled state + time to AsyncStorage
+
+Settings Screen
+
+    Evening Reminder section
+    Payment Sources section (add/edit/delete)
+    Categories section (add/edit/delete with icon + color picker)
+
+Key Technical Decisions
+
+    SQLite dynamically required (require('expo-sqlite')) so it never loads on web; web uses an in-memory WebDB shim
+    expo-notifications is lazily imported inside async functions wrapped in try/catch — the static import itself crashes in Expo Go SDK 53+ on Android
+    SMS import detects Expo Go via Constants.executionEnvironment === 'storeClient' and shows an appropriate message instead of silently hanging
+    All Feather icon names validated — only use icons confirmed to exist in the @expo/vector-icons Feather set
+    APK build: eas build --platform android --profile preview from the artifacts/expense-tracker directory (can be run from Replit Shell); outputs a direct-install .apk
+    App package: com.expensetracker.app
