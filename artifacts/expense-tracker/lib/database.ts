@@ -78,6 +78,10 @@ export function initializeDatabase() {
       color TEXT NOT NULL DEFAULT '#6B7280',
       isDefault INTEGER NOT NULL DEFAULT 0
     );
+
+    CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions(date);
+    CREATE INDEX IF NOT EXISTS idx_tx_type ON transactions(type);
+    CREATE INDEX IF NOT EXISTS idx_tx_date_type ON transactions(date, type);
   `);
 
   migrateDatabase(db);
@@ -416,4 +420,76 @@ export function getSourceStats(month: string): SourceStat {
     [`${month}%`]
   ) as SourceStat | null;
   return row ?? { smsImported: 0, smsCount: 0, manual: 0, manualCount: 0 };
+}
+
+export interface BackupData {
+  version: number;
+  exportedAt: string;
+  transactions: Omit<Transaction, 'id'>[];
+  customCategories: Omit<Category, 'id'>[];
+}
+
+export function createBackup(): BackupData {
+  let allTx: Transaction[] = [];
+  let allCats: Category[] = [];
+
+  if (Platform.OS === 'web') {
+    allTx = [...webStore.transactions];
+    allCats = webStore.categories.filter(c => !c.isDefault);
+  } else {
+    const db = getDb();
+    allTx = db.getAllSync(`SELECT * FROM transactions ORDER BY date DESC`) as Transaction[];
+    allCats = db.getAllSync(`SELECT * FROM categories WHERE isDefault=0`) as Category[];
+  }
+
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    transactions: allTx.map(({ id, ...rest }) => rest),
+    customCategories: allCats.map(({ id, ...rest }) => rest),
+  };
+}
+
+export function restoreBackup(data: BackupData): { inserted: number; skipped: number; errors: string[] } {
+  let inserted = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  if (!data.version || !Array.isArray(data.transactions)) {
+    return { inserted: 0, skipped: 0, errors: ['Invalid backup file format'] };
+  }
+
+  if (Platform.OS === 'web') {
+    return { inserted: 0, skipped: 0, errors: ['Restore is only supported on the Android app'] };
+  }
+
+  const db = getDb();
+
+  if (Array.isArray(data.customCategories)) {
+    for (const cat of data.customCategories) {
+      try {
+        db.runSync(
+          `INSERT OR IGNORE INTO categories (name, icon, color, isDefault) VALUES (?, ?, ?, 0)`,
+          [cat.name, cat.icon || 'more-horizontal', cat.color || '#6B7280']
+        );
+      } catch {}
+    }
+  }
+
+  for (const tx of data.transactions) {
+    try {
+      if (!tx.amount || !tx.type || !tx.date) { skipped++; continue; }
+      db.runSync(
+        `INSERT OR IGNORE INTO transactions (amount, type, category, description, note, date, bank, smsId)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [tx.amount, tx.type, tx.category || 'Other', tx.description || '', tx.note || '', tx.date, tx.bank || '', tx.smsId ?? null]
+      );
+      inserted++;
+    } catch (e: any) {
+      skipped++;
+      if (errors.length < 3) errors.push(e.message ?? 'unknown');
+    }
+  }
+
+  return { inserted, skipped, errors };
 }

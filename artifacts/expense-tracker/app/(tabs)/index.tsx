@@ -7,6 +7,7 @@ import {
   ScrollView,
   RefreshControl,
   Animated,
+  Alert,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
@@ -95,8 +96,18 @@ export default function HomeScreen() {
   };
 
   const handleDelete = (tx: Transaction) => {
-    deleteTransaction(tx.id);
-    loadData();
+    Alert.alert(
+      'Delete Transaction',
+      `Delete ₹${tx.amount.toFixed(2)} — ${tx.description || tx.category}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => { deleteTransaction(tx.id); loadData(); },
+        },
+      ]
+    );
   };
 
   const net = summary.received - summary.spent;

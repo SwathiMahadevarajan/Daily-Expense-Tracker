@@ -16,45 +16,28 @@ export interface RawSms {
 }
 
 const BANK_SENDER_PATTERNS: Record<string, string> = {
-  HDFCBK: 'HDFC Bank',
-  SBIINB: 'SBI',
-  ICICIB: 'ICICI Bank',
   AXISBK: 'Axis Bank',
-  KOTAKB: 'Kotak Bank',
-  PNBSMS: 'PNB',
-  BOIIND: 'Bank of India',
-  CANBNK: 'Canara Bank',
-  UNIONB: 'Union Bank',
-  YESBNK: 'Yes Bank',
-  INDUSB: 'IndusInd Bank',
-  SCBANK: 'Standard Chartered',
-  HSBCIN: 'HSBC',
+  AXISBK2: 'Axis Bank',
+  AXISNB: 'Axis Bank',
+  AXISCC: 'Axis Credit Card',
+  SBIINB: 'SBI',
   CBSSBI: 'SBI',
   SBIUPI: 'SBI UPI',
-  PAYTMB: 'Paytm Bank',
-  IDBIBK: 'IDBI Bank',
-  FEDBKM: 'Federal Bank',
-  RBLBNK: 'RBL Bank',
-  BARODN: 'Bank of Baroda',
-  SYNDBK: 'Syndicate Bank',
-  CENTBK: 'Central Bank',
-  MAHBNK: 'Maharashtra Bank',
-  OBCBNK: 'OBC',
-  ALLBNK: 'Allahabad Bank',
-  ANDBNK: 'Andhra Bank',
-  UCOBKL: 'UCO Bank',
-  VJYBKL: 'Vijaya Bank',
-  CORPBK: 'Corporation Bank',
-  DENABN: 'Dena Bank',
-  ORNTBK: 'Oriental Bank',
+  SBIPSG: 'SBI',
+  SBIBNK: 'SBI',
 };
+
+const BANK_BODY_KEYWORDS: string[] = [
+  'axis bank', 'axisbank', 'sbi', 'state bank',
+  'axis credit card', 'axis cc',
+];
 
 const SIGNAL_WORDS = [
   'debited', 'credited', 'debit', 'credit',
   'inr', 'rs.', '₹', 'upi', 'imps', 'neft', 'rtgs',
   'withdrawn', 'deposited', 'transferred', 'payment',
   'transaction', 'spent', 'received', 'balance',
-  'a/c', 'acct', 'account', 'bank',
+  'a/c', 'acct', 'account',
 ];
 
 const OTP_PATTERNS = [
@@ -70,7 +53,20 @@ const PROMO_PATTERNS = [
   /congratulations|you.?ve\s*won|selected|eligible/i,
 ];
 
-function isBankSms(address: string, body: string): boolean {
+const AUTOPAY_PATTERNS = [
+  /auto.?pay/i,
+  /standing\s*instruction/i,
+  /\bsi\s*(created|registered|cancelled|revoked|set up|activated|deactivated|updated|modified|deleted)\b/i,
+  /mandate\s*(created|registered|cancelled|revoked|approved|rejected|success|failed|activated|deactivated)/i,
+  /\bnach\b/i,
+  /auto.?debit\s*(created|registered|mandate|set|enabled|disabled)/i,
+  /emi\s*(registered|mandate|set up|created)/i,
+  /recurring\s*(payment|mandate|instruction)\s*(set|created|registered)/i,
+  /\bregistered\b.*\b(mandate|autopay|si)\b/i,
+  /\b(mandate|autopay|si)\b.*\bregistered\b/i,
+];
+
+function isFromKnownBank(address: string, body: string): boolean {
   const upperAddr = address.toUpperCase();
   const isKnownSender = Object.keys(BANK_SENDER_PATTERNS).some(fragment =>
     upperAddr.includes(fragment)
@@ -78,6 +74,9 @@ function isBankSms(address: string, body: string): boolean {
   if (isKnownSender) return true;
 
   const lowerBody = body.toLowerCase();
+  const hasBodyKeyword = BANK_BODY_KEYWORDS.some(kw => lowerBody.includes(kw));
+  if (!hasBodyKeyword) return false;
+
   const signalCount = SIGNAL_WORDS.filter(word => lowerBody.includes(word)).length;
   return signalCount >= 2;
 }
@@ -86,6 +85,10 @@ function isOtpOrPromo(body: string): boolean {
   if (OTP_PATTERNS.some(p => p.test(body))) return true;
   if (PROMO_PATTERNS.some(p => p.test(body))) return true;
   return false;
+}
+
+function isAutopayOrMandateMessage(body: string): boolean {
+  return AUTOPAY_PATTERNS.some(p => p.test(body));
 }
 
 function parseAmount(body: string): number | null {
@@ -99,7 +102,7 @@ function parseAmount(body: string): number | null {
     const match = body.match(pattern);
     if (match) {
       const amount = parseFloat(match[1].replace(/,/g, ''));
-      if (!isNaN(amount) && amount > 0) return amount;
+      if (!isNaN(amount) && amount > 0 && amount < 10000000) return amount;
     }
   }
   return null;
@@ -114,12 +117,8 @@ function parseType(body: string): 'debit' | 'credit' {
   let debitScore = 0;
   let creditScore = 0;
 
-  for (const kw of debitKeywords) {
-    if (lowerBody.includes(kw)) debitScore++;
-  }
-  for (const kw of creditKeywords) {
-    if (lowerBody.includes(kw)) creditScore++;
-  }
+  for (const kw of debitKeywords) { if (lowerBody.includes(kw)) debitScore++; }
+  for (const kw of creditKeywords) { if (lowerBody.includes(kw)) creditScore++; }
 
   return creditScore > debitScore ? 'credit' : 'debit';
 }
@@ -130,10 +129,12 @@ function parseBank(address: string, body: string): string {
     if (upperAddr.includes(fragment)) return bankName;
   }
 
-  const bankBodyMatch = body.match(/(?:from|to|via)\s+([A-Z][a-zA-Z\s]{2,20}(?:Bank|Pay|UPI))/);
-  if (bankBodyMatch) return bankBodyMatch[1].trim();
+  const lowerBody = body.toLowerCase();
+  if (lowerBody.includes('axis bank') || lowerBody.includes('axisbank')) return 'Axis Bank';
+  if (lowerBody.includes('axis credit') || lowerBody.includes('axis cc')) return 'Axis Credit Card';
+  if (lowerBody.includes('state bank') || lowerBody.includes(' sbi')) return 'SBI';
 
-  return 'Unknown Bank';
+  return 'Bank';
 }
 
 function parseMerchant(body: string): string {
@@ -158,8 +159,9 @@ function formatDate(timestamp: number): string {
 }
 
 export function parseSmsMessage(sms: RawSms): ParsedSmsTransaction | null {
-  if (!isBankSms(sms.address, sms.body)) return null;
+  if (!isFromKnownBank(sms.address, sms.body)) return null;
   if (isOtpOrPromo(sms.body)) return null;
+  if (isAutopayOrMandateMessage(sms.body)) return null;
 
   const amount = parseAmount(sms.body);
   if (!amount) return null;
@@ -173,15 +175,7 @@ export function parseSmsMessage(sms: RawSms): ParsedSmsTransaction | null {
     ? `${type === 'debit' ? 'Payment to' : 'Received from'} ${merchant}`
     : `${type === 'debit' ? 'Debit' : 'Credit'} via ${bank}`;
 
-  return {
-    amount,
-    type,
-    bank,
-    merchant,
-    date,
-    description,
-    smsId: sms._id,
-  };
+  return { amount, type, bank, merchant, date, description, smsId: sms._id };
 }
 
 export function processSmsChunk(
@@ -198,10 +192,7 @@ export function processSmsChunk(
     const result = parseSmsMessage(sms);
     if (result) {
       bankSmsCount++;
-      parsed.push({
-        ...result,
-        alreadyImported: importedIds.has(sms._id),
-      });
+      parsed.push({ ...result, alreadyImported: importedIds.has(sms._id) });
     }
   }
 
