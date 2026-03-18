@@ -6,11 +6,12 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "expensetracker",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/images/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#6366F1"
     },
     "ios": {
       "supportsTablet": true,
@@ -19,14 +20,15 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#6366F1"
       },
       "package": "com.expensetracker.app",
       "permissions": [
         "android.permission.READ_SMS",
         "android.permission.RECEIVE_SMS",
         "android.permission.SCHEDULE_EXACT_ALARM",
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.USE_EXACT_ALARM"
       ]
     },
     "web": {
@@ -37,11 +39,12 @@
     "plugins": [
       "expo-router",
       "expo-sqlite",
+      "expo-splash-screen",
       [
         "expo-notifications",
         {
           "icon": "./assets/images/notification-icon.png",
-          "color": "#ffffff"
+          "color": "#6366F1"
         }
       ]
     ],

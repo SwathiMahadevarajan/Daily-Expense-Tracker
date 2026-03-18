@@ -6,11 +6,14 @@ config.resolver.assetExts = config.resolver.assetExts.filter(ext => ext !== 'was
 config.resolver.sourceExts = [...config.resolver.sourceExts, 'wasm'];
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
-  if (
-    platform === 'web' &&
-    (moduleName.includes('wa-sqlite') || moduleName.includes('.wasm'))
-  ) {
-    return { type: 'empty' };
+  if (platform === 'web') {
+    if (
+      moduleName.includes('wa-sqlite') ||
+      moduleName.includes('.wasm') ||
+      moduleName === 'react-native-get-sms-android'
+    ) {
+      return { type: 'empty' };
+    }
   }
   return context.resolveRequest(context, moduleName, platform);
 };

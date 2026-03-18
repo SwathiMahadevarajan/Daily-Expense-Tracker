@@ -285,3 +285,135 @@ export function getCategoryBreakdown(month: string): { category: string; total: 
     [`${month}%`]
   ) as { category: string; total: number; count: number }[];
 }
+
+export interface MonthlyTrendPoint {
+  month: string;
+  label: string;
+  spent: number;
+  received: number;
+  count: number;
+}
+
+export function getMonthlyTrend(numMonths: number): MonthlyTrendPoint[] {
+  const points: MonthlyTrendPoint[] = [];
+  const now = new Date();
+  for (let i = numMonths - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const label = d.toLocaleDateString('en-IN', { month: 'short' });
+    if (Platform.OS === 'web') {
+      const txs = webStore.transactions.filter(t => t.date.startsWith(month));
+      points.push({
+        month,
+        label,
+        spent: txs.filter(t => t.type === 'debit').reduce((s, t) => s + t.amount, 0),
+        received: txs.filter(t => t.type === 'credit').reduce((s, t) => s + t.amount, 0),
+        count: txs.length,
+      });
+    } else {
+      const db = getDb();
+      const row = db.getFirstSync(
+        `SELECT COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE 0 END),0) as spent,
+                COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END),0) as received,
+                COUNT(*) as count
+         FROM transactions WHERE date LIKE ?`,
+        [`${month}%`]
+      ) as { spent: number; received: number; count: number } | null;
+      points.push({ month, label, ...(row ?? { spent: 0, received: 0, count: 0 }) });
+    }
+  }
+  return points;
+}
+
+export interface TopTransaction {
+  id: number;
+  amount: number;
+  category: string;
+  description: string;
+  date: string;
+  type: 'debit' | 'credit';
+}
+
+export function getTopTransactions(month: string, limit = 5, type: 'debit' | 'credit' = 'debit'): TopTransaction[] {
+  if (Platform.OS === 'web') {
+    return webStore.transactions
+      .filter(t => t.date.startsWith(month) && t.type === type)
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, limit)
+      .map(t => ({ id: t.id, amount: t.amount, category: t.category, description: t.description, date: t.date, type: t.type }));
+  }
+  const db = getDb();
+  return db.getAllSync(
+    `SELECT id, amount, category, description, date, type
+     FROM transactions WHERE date LIKE ? AND type=?
+     ORDER BY amount DESC LIMIT ?`,
+    [`${month}%`, type, limit]
+  ) as TopTransaction[];
+}
+
+export interface DayOfWeekStat {
+  day: string;
+  shortDay: string;
+  total: number;
+  count: number;
+}
+
+export function getDayOfWeekStats(month: string): DayOfWeekStat[] {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const short = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const map: Record<number, { total: number; count: number }> = {};
+  for (let i = 0; i < 7; i++) map[i] = { total: 0, count: 0 };
+
+  if (Platform.OS === 'web') {
+    const txs = webStore.transactions.filter(t => t.date.startsWith(month) && t.type === 'debit');
+    for (const t of txs) {
+      const dow = new Date(t.date + 'T00:00:00').getDay();
+      map[dow].total += t.amount;
+      map[dow].count++;
+    }
+  } else {
+    const db = getDb();
+    const rows = db.getAllSync(
+      `SELECT date, amount FROM transactions WHERE date LIKE ? AND type='debit'`,
+      [`${month}%`]
+    ) as { date: string; amount: number }[];
+    for (const r of rows) {
+      const dow = new Date(r.date + 'T00:00:00').getDay();
+      map[dow].total += r.amount;
+      map[dow].count++;
+    }
+  }
+  return days.map((day, i) => ({ day, shortDay: short[i], total: map[i].total, count: map[i].count }));
+}
+
+export interface SourceStat {
+  smsImported: number;
+  smsCount: number;
+  manual: number;
+  manualCount: number;
+}
+
+export function getSourceStats(month: string): SourceStat {
+  if (Platform.OS === 'web') {
+    const txs = webStore.transactions.filter(t => t.date.startsWith(month) && t.type === 'debit');
+    const sms = txs.filter(t => t.smsId);
+    const manual = txs.filter(t => !t.smsId);
+    return {
+      smsImported: sms.reduce((s, t) => s + t.amount, 0),
+      smsCount: sms.length,
+      manual: manual.reduce((s, t) => s + t.amount, 0),
+      manualCount: manual.length,
+    };
+  }
+  const db = getDb();
+  const row = db.getFirstSync(
+    `SELECT
+       COALESCE(SUM(CASE WHEN smsId IS NOT NULL AND type='debit' THEN amount ELSE 0 END),0) as smsImported,
+       COUNT(CASE WHEN smsId IS NOT NULL AND type='debit' THEN 1 END) as smsCount,
+       COALESCE(SUM(CASE WHEN smsId IS NULL AND type='debit' THEN amount ELSE 0 END),0) as manual,
+       COUNT(CASE WHEN smsId IS NULL AND type='debit' THEN 1 END) as manualCount
+     FROM transactions WHERE date LIKE ?`,
+    [`${month}%`]
+  ) as SourceStat | null;
+  return row ?? { smsImported: 0, smsCount: 0, manual: 0, manualCount: 0 };
+}

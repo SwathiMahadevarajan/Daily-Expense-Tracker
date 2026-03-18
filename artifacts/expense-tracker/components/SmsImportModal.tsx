@@ -15,6 +15,7 @@ import { Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { parseSmsMessage, processSmsChunk, ParsedSmsTransaction } from '../lib/smsParser';
 import { getImportedSmsIds, bulkInsertSmsTransactions, deleteTransactionBySmsId } from '../lib/database';
+import { readSms, getSmsAndroidModule } from '../lib/smsAndroid';
 
 interface Props {
   visible: boolean;
@@ -106,11 +107,12 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
     setResults([]);
     animateProgress(0);
 
-    let SmsAndroid: any;
-    try {
-      SmsAndroid = require('react-native-get-sms-android');
-    } catch {
-      Alert.alert('Module Not Available', 'SMS reading module requires the full APK build via EAS Build.');
+    if (!getSmsAndroidModule()) {
+      Alert.alert(
+        'Module Not Available',
+        'SMS reading requires the full APK build via EAS Build.\n\nRun: eas build --platform android --profile preview',
+        [{ text: 'OK' }]
+      );
       setStage('idle');
       return;
     }
@@ -121,37 +123,23 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
     let totalBankSms = 0;
 
     try {
-      await new Promise<void>((resolve, reject) => {
-        SmsAndroid.list(
-          JSON.stringify({ box: 'inbox', maxCount: MAX_SMS }),
-          (fail: string) => reject(new Error(fail)),
-          (count: number, smsList: string) => {
-            const rawMessages = JSON.parse(smsList);
-            const chunks: any[][] = [];
-            for (let i = 0; i < rawMessages.length; i += CHUNK_SIZE) {
-              chunks.push(rawMessages.slice(i, i + CHUNK_SIZE));
-            }
-
-            const processChunks = async () => {
-              for (const chunk of chunks) {
-                const { parsed, bankSmsCount } = processSmsChunk(chunk, importedIds);
-                totalRead += chunk.length;
-                totalBankSms += bankSmsCount;
-                for (const p of parsed) {
-                  allParsed.push({ ...p, selected: !p.alreadyImported, deleted: false });
-                }
-                setSmsRead(totalRead);
-                setBankSmsFound(totalBankSms);
-                animateProgress(Math.min((totalRead / Math.max(count, 1)) * 100, 100));
-                await new Promise(r => setTimeout(r, 10));
-              }
-              resolve();
-            };
-
-            processChunks().catch(reject);
-          }
-        );
-      });
+      const rawMessages = await readSms({ box: 'inbox', maxCount: MAX_SMS });
+      const chunks: any[][] = [];
+      for (let i = 0; i < rawMessages.length; i += CHUNK_SIZE) {
+        chunks.push(rawMessages.slice(i, i + CHUNK_SIZE));
+      }
+      for (const chunk of chunks) {
+        const { parsed, bankSmsCount } = processSmsChunk(chunk, importedIds);
+        totalRead += chunk.length;
+        totalBankSms += bankSmsCount;
+        for (const p of parsed) {
+          allParsed.push({ ...p, selected: !p.alreadyImported, deleted: false });
+        }
+        setSmsRead(totalRead);
+        setBankSmsFound(totalBankSms);
+        animateProgress(Math.min((totalRead / Math.max(rawMessages.length, 1)) * 100, 100));
+        await new Promise(r => setTimeout(r, 10));
+      }
     } catch (err: any) {
       Alert.alert('SMS Read Error', err.message ?? 'Unknown error reading SMS.');
       setStage('idle');
