@@ -41,6 +41,7 @@ const webStore = {
   categories: DEFAULT_CATEGORIES.map((c, i) => ({ ...c, id: i + 1 })) as Category[],
   nextTxId: 1,
   nextCatId: DEFAULT_CATEGORIES.length + 1,
+  importedSmsIds: new Set<string>(),
 };
 
 function getDb() {
@@ -79,6 +80,11 @@ export function initializeDatabase() {
       isDefault INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS sms_import_log (
+      smsId TEXT PRIMARY KEY,
+      importedAt TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions(date);
     CREATE INDEX IF NOT EXISTS idx_tx_type ON transactions(type);
     CREATE INDEX IF NOT EXISTS idx_tx_date_type ON transactions(date, type);
@@ -91,6 +97,14 @@ export function initializeDatabase() {
 function migrateDatabase(db: any) {
   try { db.execSync(`ALTER TABLE transactions ADD COLUMN smsId TEXT UNIQUE;`); } catch {}
   try { db.execSync(`ALTER TABLE categories ADD COLUMN isDefault INTEGER NOT NULL DEFAULT 0;`); } catch {}
+  try {
+    db.execSync(`
+      CREATE TABLE IF NOT EXISTS sms_import_log (
+        smsId TEXT PRIMARY KEY,
+        importedAt TEXT NOT NULL
+      );
+    `);
+  } catch {}
 
   db.execSync(`
     UPDATE categories SET icon = 'coffee' WHERE icon = 'utensils';
@@ -178,11 +192,67 @@ export function deleteTransactionBySmsId(smsId: string) {
   db.runSync(`DELETE FROM transactions WHERE smsId=?`, [smsId]);
 }
 
-export function getImportedSmsIds(): Set<string> {
-  if (Platform.OS === 'web') return new Set();
+export function bulkDeleteTransactions(ids: number[]) {
+  if (ids.length === 0) return;
+  if (Platform.OS === 'web') {
+    const idSet = new Set(ids);
+    webStore.transactions = webStore.transactions.filter(t => !idSet.has(t.id));
+    return;
+  }
   const db = getDb();
-  const rows = db.getAllSync(`SELECT smsId FROM transactions WHERE smsId IS NOT NULL`) as { smsId: string }[];
+  const placeholders = ids.map(() => '?').join(',');
+  db.runSync(`DELETE FROM transactions WHERE id IN (${placeholders})`, ids);
+}
+
+export function bulkUpdateTransactionCategory(ids: number[], category: string) {
+  if (ids.length === 0) return;
+  if (Platform.OS === 'web') {
+    webStore.transactions = webStore.transactions.map(t =>
+      ids.includes(t.id) ? { ...t, category } : t
+    );
+    return;
+  }
+  const db = getDb();
+  const placeholders = ids.map(() => '?').join(',');
+  db.runSync(`UPDATE transactions SET category=? WHERE id IN (${placeholders})`, [category, ...ids]);
+}
+
+export function bulkUpdateTransactionBank(ids: number[], bank: string) {
+  if (ids.length === 0) return;
+  if (Platform.OS === 'web') {
+    webStore.transactions = webStore.transactions.map(t =>
+      ids.includes(t.id) ? { ...t, bank } : t
+    );
+    return;
+  }
+  const db = getDb();
+  const placeholders = ids.map(() => '?').join(',');
+  db.runSync(`UPDATE transactions SET bank=? WHERE id IN (${placeholders})`, [bank, ...ids]);
+}
+
+export function getImportedSmsIds(): Set<string> {
+  if (Platform.OS === 'web') return new Set(webStore.importedSmsIds);
+  const db = getDb();
+  const rows = db.getAllSync(`SELECT smsId FROM sms_import_log`) as { smsId: string }[];
   return new Set(rows.map(r => r.smsId));
+}
+
+export function recordImportedSmsIds(smsIds: string[]) {
+  if (smsIds.length === 0) return;
+  if (Platform.OS === 'web') {
+    smsIds.forEach(id => webStore.importedSmsIds.add(id));
+    return;
+  }
+  const db = getDb();
+  const now = new Date().toISOString();
+  for (const smsId of smsIds) {
+    try {
+      db.runSync(
+        `INSERT OR IGNORE INTO sms_import_log (smsId, importedAt) VALUES (?, ?)`,
+        [smsId, now]
+      );
+    } catch {}
+  }
 }
 
 export function bulkInsertSmsTransactions(txList: Omit<Transaction, 'id'>[]): number {
@@ -388,6 +458,45 @@ export function getDayOfWeekStats(month: string): DayOfWeekStat[] {
     }
   }
   return days.map((day, i) => ({ day, shortDay: short[i], total: map[i].total, count: map[i].count }));
+}
+
+export interface WeeklySpendPoint {
+  week: string;
+  label: string;
+  spent: number;
+  count: number;
+}
+
+export function getWeeklySpend(month: string): WeeklySpendPoint[] {
+  const [year, mon] = month.split('-').map(Number);
+  const daysInMonth = new Date(year, mon, 0).getDate();
+  const weeks: WeeklySpendPoint[] = [
+    { week: '1', label: '1–7', spent: 0, count: 0 },
+    { week: '2', label: '8–14', spent: 0, count: 0 },
+    { week: '3', label: '15–21', spent: 0, count: 0 },
+    { week: '4', label: `22–${daysInMonth}`, spent: 0, count: 0 },
+  ];
+
+  let rows: { date: string; amount: number }[] = [];
+  if (Platform.OS === 'web') {
+    rows = webStore.transactions
+      .filter(t => t.date.startsWith(month) && t.type === 'debit')
+      .map(t => ({ date: t.date, amount: t.amount }));
+  } else {
+    const db = getDb();
+    rows = db.getAllSync(
+      `SELECT date, amount FROM transactions WHERE date LIKE ? AND type='debit'`,
+      [`${month}%`]
+    ) as { date: string; amount: number }[];
+  }
+
+  for (const r of rows) {
+    const day = parseInt(r.date.slice(8, 10));
+    const wi = day <= 7 ? 0 : day <= 14 ? 1 : day <= 21 ? 2 : 3;
+    weeks[wi].spent += r.amount;
+    weeks[wi].count++;
+  }
+  return weeks;
 }
 
 export interface SourceStat {

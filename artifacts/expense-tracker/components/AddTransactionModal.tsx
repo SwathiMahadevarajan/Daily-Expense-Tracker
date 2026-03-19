@@ -8,10 +8,15 @@ import {
   TextInput,
   ScrollView,
   Alert,
+  Platform,
+  StatusBar,
 } from 'react-native';
+
 import { Feather } from '@expo/vector-icons';
 import { Transaction, addTransaction, updateTransaction, getCategories, addCategory, Category } from '../lib/database';
 import CategoryForm from './CategoryForm';
+
+const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0;
 
 interface Props {
   visible: boolean;
@@ -94,7 +99,7 @@ export default function AddTransactionModal({ visible, onClose, onSaved, editTra
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingTop: STATUS_BAR_HEIGHT }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.headerBtn}>
             <Feather name="x" size={22} color="#374151" />

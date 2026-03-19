@@ -10,6 +10,7 @@ import {
   Switch,
   Platform,
   Modal,
+  StatusBar,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
@@ -20,6 +21,8 @@ import CategoryForm from '../../components/CategoryForm';
 import { Share } from 'react-native';
 
 const REMINDER_KEY = 'evening_reminder';
+
+const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0;
 
 const EVENING_HOURS = [
   { label: '6:00 PM', hour: '18', minute: '00' },
@@ -178,7 +181,18 @@ export default function SettingsScreen() {
 
   const handleDeleteCategory = (cat: Category) => {
     if (cat.isDefault) {
-      Alert.alert('Cannot Delete', 'Default categories cannot be deleted.');
+      Alert.alert(
+        'Delete Default Category?',
+        `"${cat.name}" is a built-in category. Deleting it may affect existing transactions using this category. Are you sure?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => { deleteCategory(cat.id); setCategories(getCategories()); },
+          },
+        ]
+      );
       return;
     }
     Alert.alert('Delete Category', `Delete "${cat.name}"?`, [
@@ -323,6 +337,8 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        <Text style={styles.catHint}>Tap the edit icon to customise any category, including built-in ones.</Text>
+
         {showNewCatForm && (
           <View style={styles.card}>
             <Text style={styles.cardSubTitle}>New Category</Text>
@@ -337,7 +353,14 @@ export default function SettingsScreen() {
         {categories.map(cat => (
           editingCat?.id === cat.id ? (
             <View key={cat.id} style={[styles.card, { marginBottom: 8 }]}>
-              <Text style={styles.cardSubTitle}>Edit: {cat.name}</Text>
+              <View style={styles.editingCatHeader}>
+                <Text style={styles.cardSubTitle}>Edit: {editingCat.name}</Text>
+                {cat.isDefault && (
+                  <View style={styles.defaultBadgeSmall}>
+                    <Text style={styles.defaultBadgeSmallText}>Built-in</Text>
+                  </View>
+                )}
+              </View>
               <CategoryForm
                 initialName={cat.name}
                 initialIcon={cat.icon}
@@ -353,20 +376,25 @@ export default function SettingsScreen() {
                 <Feather name={cat.icon as any} size={18} color={cat.color} />
               </View>
               <Text style={styles.catName}>{cat.name}</Text>
-              {cat.isDefault ? (
+              {cat.isDefault && (
                 <View style={styles.defaultBadge}>
-                  <Text style={styles.defaultBadgeText}>Default</Text>
-                </View>
-              ) : (
-                <View style={styles.catActions}>
-                  <TouchableOpacity onPress={() => { setEditingCat(cat); setShowNewCatForm(false); }} style={styles.catActionBtn}>
-                    <Feather name="edit-2" size={15} color="#6366F1" />
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => handleDeleteCategory(cat)} style={styles.catActionBtn}>
-                    <Feather name="trash-2" size={15} color="#EF4444" />
-                  </TouchableOpacity>
+                  <Text style={styles.defaultBadgeText}>Built-in</Text>
                 </View>
               )}
+              <View style={styles.catActions}>
+                <TouchableOpacity
+                  onPress={() => { setEditingCat(cat); setShowNewCatForm(false); }}
+                  style={styles.catActionBtn}
+                >
+                  <Feather name="edit-2" size={15} color="#6366F1" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => handleDeleteCategory(cat)}
+                  style={styles.catActionBtn}
+                >
+                  <Feather name="trash-2" size={15} color="#EF4444" />
+                </TouchableOpacity>
+              </View>
             </View>
           )
         ))}
@@ -374,8 +402,13 @@ export default function SettingsScreen() {
 
       <View style={{ height: 40 }} />
 
-      <Modal visible={showRestoreModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowRestoreModal(false)}>
-        <View style={styles.modalContainer}>
+      <Modal
+        visible={showRestoreModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowRestoreModal(false)}
+      >
+        <View style={[styles.modalContainer, { paddingTop: STATUS_BAR_HEIGHT }]}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Restore Backup</Text>
             <TouchableOpacity onPress={() => setShowRestoreModal(false)} style={styles.modalClose}>
@@ -417,8 +450,9 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   section: { marginTop: 20, paddingHorizontal: 16 },
-  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
   sectionTitle: { fontSize: 12, fontWeight: '700', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 },
+  catHint: { fontSize: 12, color: '#9CA3AF', marginBottom: 10, fontStyle: 'italic' },
   addCatBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#EEF2FF', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
   addCatBtnText: { fontSize: 13, fontWeight: '600', color: '#6366F1' },
   card: {
@@ -426,6 +460,7 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2,
   },
   cardSubTitle: { fontSize: 14, fontWeight: '700', color: '#374151', marginBottom: 12 },
+  editingCatHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 8 },
   backupRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14, gap: 12 },
   backupIconWrap: { width: 42, height: 42, borderRadius: 12, backgroundColor: '#EEF2FF', alignItems: 'center', justifyContent: 'center' },
   backupInfo: { flex: 1 },
@@ -473,8 +508,10 @@ const styles = StyleSheet.create({
   },
   catIconBox: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   catName: { flex: 1, fontSize: 15, fontWeight: '600', color: '#111827' },
-  defaultBadge: { backgroundColor: '#F3F4F6', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  defaultBadge: { backgroundColor: '#F3F4F6', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, marginRight: 4 },
   defaultBadgeText: { fontSize: 11, color: '#9CA3AF', fontWeight: '500' },
+  defaultBadgeSmall: { backgroundColor: '#FEF3C7', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  defaultBadgeSmallText: { fontSize: 11, color: '#92400E', fontWeight: '600' },
   catActions: { flexDirection: 'row', gap: 4 },
   catActionBtn: { padding: 8 },
   modalContainer: { flex: 1, backgroundColor: '#F9FAFB' },

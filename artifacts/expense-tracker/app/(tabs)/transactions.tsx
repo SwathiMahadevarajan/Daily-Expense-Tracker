@@ -9,10 +9,20 @@ import {
   Alert,
   Share,
   Platform,
+  Modal,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { Transaction, getTransactions, deleteTransaction } from '../../lib/database';
+import {
+  Transaction,
+  getTransactions,
+  deleteTransaction,
+  bulkDeleteTransactions,
+  bulkUpdateTransactionCategory,
+  bulkUpdateTransactionBank,
+  getCategories,
+  Category,
+} from '../../lib/database';
 import { getPaymentSources } from '../../lib/paymentSources';
 import AddTransactionModal from '../../components/AddTransactionModal';
 
@@ -52,11 +62,17 @@ export default function TransactionsScreen() {
   const [paymentSources, setPaymentSources] = useState<string[]>([]);
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
 
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkActionModal, setBulkActionModal] = useState<'category' | 'source' | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
+
   const loadData = useCallback(() => {
     const txs = getTransactions();
     setTransactions(txs);
     applyFilter(txs, search, filterType);
     getPaymentSources().then(setPaymentSources);
+    setCategories(getCategories());
   }, [search, filterType]);
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
@@ -121,6 +137,63 @@ export default function TransactionsScreen() {
     }
   };
 
+  const toggleBulkMode = () => {
+    setBulkMode(prev => !prev);
+    setSelectedIds(new Set());
+    setSelectedTx(null);
+  };
+
+  const toggleBulkSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllFiltered = () => {
+    setSelectedIds(new Set(filtered.map(t => t.id)));
+  };
+
+  const deselectAll = () => setSelectedIds(new Set());
+
+  const handleBulkDelete = () => {
+    if (selectedIds.size === 0) return;
+    Alert.alert(
+      'Delete Transactions',
+      `Delete ${selectedIds.size} selected transaction${selectedIds.size !== 1 ? 's' : ''}? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All',
+          style: 'destructive',
+          onPress: () => {
+            bulkDeleteTransactions([...selectedIds]);
+            setSelectedIds(new Set());
+            setBulkMode(false);
+            loadData();
+          },
+        },
+      ]
+    );
+  };
+
+  const handleBulkCategorySelect = (category: string) => {
+    bulkUpdateTransactionCategory([...selectedIds], category);
+    setBulkActionModal(null);
+    setSelectedIds(new Set());
+    setBulkMode(false);
+    loadData();
+  };
+
+  const handleBulkSourceSelect = (source: string) => {
+    bulkUpdateTransactionBank([...selectedIds], source);
+    setBulkActionModal(null);
+    setSelectedIds(new Set());
+    setBulkMode(false);
+    loadData();
+  };
+
   const totalShown = filtered.reduce((sum, tx) => sum + (tx.type === 'debit' ? -tx.amount : tx.amount), 0);
 
   return (
@@ -144,6 +217,12 @@ export default function TransactionsScreen() {
         <TouchableOpacity style={styles.exportBtn} onPress={handleExport}>
           <Feather name="share" size={18} color="#6366F1" />
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.exportBtn, bulkMode && styles.exportBtnActive]}
+          onPress={toggleBulkMode}
+        >
+          <Feather name="check-square" size={18} color={bulkMode ? '#FFFFFF' : '#6366F1'} />
+        </TouchableOpacity>
       </View>
 
       <View style={styles.filterRow}>
@@ -166,6 +245,41 @@ export default function TransactionsScreen() {
         </View>
       </View>
 
+      {bulkMode && (
+        <View style={styles.bulkBar}>
+          <Text style={styles.bulkCount}>{selectedIds.size} selected</Text>
+          <TouchableOpacity style={styles.bulkSelectBtn} onPress={selectAllFiltered}>
+            <Text style={styles.bulkSelectBtnText}>All</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.bulkSelectBtn} onPress={deselectAll}>
+            <Text style={styles.bulkSelectBtnText}>None</Text>
+          </TouchableOpacity>
+          <View style={styles.bulkActions}>
+            <TouchableOpacity
+              style={[styles.bulkActionBtn, selectedIds.size === 0 && styles.bulkActionBtnDisabled]}
+              onPress={() => selectedIds.size > 0 && setBulkActionModal('category')}
+            >
+              <Feather name="tag" size={14} color={selectedIds.size > 0 ? '#6366F1' : '#D1D5DB'} />
+              <Text style={[styles.bulkActionBtnText, selectedIds.size === 0 && { color: '#D1D5DB' }]}>Category</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.bulkActionBtn, selectedIds.size === 0 && styles.bulkActionBtnDisabled]}
+              onPress={() => selectedIds.size > 0 && setBulkActionModal('source')}
+            >
+              <Feather name="credit-card" size={14} color={selectedIds.size > 0 ? '#10B981' : '#D1D5DB'} />
+              <Text style={[styles.bulkActionBtnText, { color: selectedIds.size > 0 ? '#10B981' : '#D1D5DB' }]}>Source</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.bulkActionBtn, styles.bulkDeleteBtn, selectedIds.size === 0 && styles.bulkActionBtnDisabled]}
+              onPress={handleBulkDelete}
+            >
+              <Feather name="trash-2" size={14} color={selectedIds.size > 0 ? '#EF4444' : '#D1D5DB'} />
+              <Text style={[styles.bulkActionBtnText, { color: selectedIds.size > 0 ? '#EF4444' : '#D1D5DB' }]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       <ScrollView style={styles.list}>
         {filtered.length === 0 ? (
           <View style={styles.emptyState}>
@@ -173,49 +287,68 @@ export default function TransactionsScreen() {
             <Text style={styles.emptyText}>No transactions found</Text>
           </View>
         ) : (
-          filtered.map(tx => (
-            <TouchableOpacity
-              key={tx.id}
-              style={[styles.txItem, selectedTx?.id === tx.id && styles.txItemSelected]}
-              onPress={() => setSelectedTx(selectedTx?.id === tx.id ? null : tx)}
-            >
-              <View style={[styles.txIcon, { backgroundColor: tx.type === 'credit' ? '#D1FAE5' : '#FEE2E2' }]}>
-                <Feather
-                  name={tx.type === 'credit' ? 'arrow-down-left' : 'arrow-up-right'}
-                  size={16}
-                  color={tx.type === 'credit' ? '#10B981' : '#EF4444'}
-                />
-              </View>
-              <View style={styles.txDetails}>
-                <Text style={styles.txDescription} numberOfLines={1}>{tx.description || tx.category}</Text>
-                <Text style={styles.txMeta}>
-                  {formatDateDisplay(tx.date)} • {tx.category}
-                  {tx.bank ? ` • ${tx.bank}` : ''}
-                  {tx.smsId ? ' • SMS' : ''}
-                </Text>
-              </View>
-              <Text style={[styles.txAmount, { color: tx.type === 'credit' ? '#10B981' : '#EF4444' }]}>
-                {tx.type === 'credit' ? '+' : '-'}{formatCurrency(tx.amount)}
-              </Text>
-
-              {selectedTx?.id === tx.id && (
-                <View style={styles.txActions}>
-                  <TouchableOpacity
-                    style={styles.txActionBtn}
-                    onPress={() => { setEditTx(tx); setSelectedTx(null); setModalVisible(true); }}
-                  >
-                    <Feather name="edit-2" size={15} color="#6366F1" />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.txActionBtn, styles.txDeleteBtn]}
-                    onPress={() => handleDelete(tx)}
-                  >
-                    <Feather name="trash-2" size={15} color="#EF4444" />
-                  </TouchableOpacity>
+          filtered.map(tx => {
+            const isBulkSelected = selectedIds.has(tx.id);
+            return (
+              <TouchableOpacity
+                key={tx.id}
+                style={[
+                  styles.txItem,
+                  !bulkMode && selectedTx?.id === tx.id && styles.txItemSelected,
+                  bulkMode && isBulkSelected && styles.txItemBulkSelected,
+                ]}
+                onPress={() => {
+                  if (bulkMode) {
+                    toggleBulkSelect(tx.id);
+                  } else {
+                    setSelectedTx(selectedTx?.id === tx.id ? null : tx);
+                  }
+                }}
+                activeOpacity={0.7}
+              >
+                {bulkMode && (
+                  <View style={[styles.bulkCheckbox, isBulkSelected && styles.bulkCheckboxSelected]}>
+                    {isBulkSelected && <Feather name="check" size={12} color="#FFFFFF" />}
+                  </View>
+                )}
+                <View style={[styles.txIcon, { backgroundColor: tx.type === 'credit' ? '#D1FAE5' : '#FEE2E2' }]}>
+                  <Feather
+                    name={tx.type === 'credit' ? 'arrow-down-left' : 'arrow-up-right'}
+                    size={16}
+                    color={tx.type === 'credit' ? '#10B981' : '#EF4444'}
+                  />
                 </View>
-              )}
-            </TouchableOpacity>
-          ))
+                <View style={styles.txDetails}>
+                  <Text style={styles.txDescription} numberOfLines={1}>{tx.description || tx.category}</Text>
+                  <Text style={styles.txMeta}>
+                    {formatDateDisplay(tx.date)} • {tx.category}
+                    {tx.bank ? ` • ${tx.bank}` : ''}
+                    {tx.smsId ? ' • SMS' : ''}
+                  </Text>
+                </View>
+                <Text style={[styles.txAmount, { color: tx.type === 'credit' ? '#10B981' : '#EF4444' }]}>
+                  {tx.type === 'credit' ? '+' : '-'}{formatCurrency(tx.amount)}
+                </Text>
+
+                {!bulkMode && selectedTx?.id === tx.id && (
+                  <View style={styles.txActions}>
+                    <TouchableOpacity
+                      style={styles.txActionBtn}
+                      onPress={() => { setEditTx(tx); setSelectedTx(null); setModalVisible(true); }}
+                    >
+                      <Feather name="edit-2" size={15} color="#6366F1" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.txActionBtn, styles.txDeleteBtn]}
+                      onPress={() => handleDelete(tx)}
+                    >
+                      <Feather name="trash-2" size={15} color="#EF4444" />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })
         )}
         <View style={{ height: 32 }} />
       </ScrollView>
@@ -227,6 +360,59 @@ export default function TransactionsScreen() {
         editTransaction={editTx}
         paymentSources={paymentSources}
       />
+
+      <Modal
+        visible={bulkActionModal !== null}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setBulkActionModal(null)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setBulkActionModal(null)}
+        >
+          <View style={styles.bottomSheet} onStartShouldSetResponder={() => true}>
+            <View style={styles.bottomSheetHandle} />
+            <Text style={styles.bottomSheetTitle}>
+              {bulkActionModal === 'category'
+                ? `Set Category for ${selectedIds.size} transactions`
+                : `Set Payment Source for ${selectedIds.size} transactions`}
+            </Text>
+            <ScrollView style={styles.bottomSheetList} showsVerticalScrollIndicator={false}>
+              {bulkActionModal === 'category' &&
+                categories.map(cat => (
+                  <TouchableOpacity
+                    key={cat.id}
+                    style={styles.bottomSheetItem}
+                    onPress={() => handleBulkCategorySelect(cat.name)}
+                  >
+                    <View style={[styles.catIconSmall, { backgroundColor: cat.color + '22' }]}>
+                      <Feather name={cat.icon as any} size={16} color={cat.color} />
+                    </View>
+                    <Text style={styles.bottomSheetItemText}>{cat.name}</Text>
+                    <Feather name="chevron-right" size={16} color="#D1D5DB" />
+                  </TouchableOpacity>
+                ))}
+              {bulkActionModal === 'source' &&
+                paymentSources.map(source => (
+                  <TouchableOpacity
+                    key={source}
+                    style={styles.bottomSheetItem}
+                    onPress={() => handleBulkSourceSelect(source)}
+                  >
+                    <View style={styles.sourceIconSmall}>
+                      <Feather name="credit-card" size={16} color="#6366F1" />
+                    </View>
+                    <Text style={styles.bottomSheetItemText}>{source}</Text>
+                    <Feather name="chevron-right" size={16} color="#D1D5DB" />
+                  </TouchableOpacity>
+                ))}
+              <View style={{ height: 20 }} />
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -260,6 +446,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#C7D2FE',
   },
+  exportBtnActive: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
   filterRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -277,6 +464,30 @@ const styles = StyleSheet.create({
   filterRight: { marginLeft: 'auto', alignItems: 'flex-end' },
   countText: { fontSize: 11, color: '#9CA3AF' },
   totalText: { fontSize: 13, fontWeight: '700' },
+  bulkBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#EEF2FF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#C7D2FE',
+    gap: 6,
+  },
+  bulkCount: { fontSize: 13, fontWeight: '700', color: '#4338CA', minWidth: 70 },
+  bulkSelectBtn: {
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: '#C7D2FE',
+  },
+  bulkSelectBtnText: { fontSize: 12, fontWeight: '600', color: '#4338CA' },
+  bulkActions: { flexDirection: 'row', gap: 6, marginLeft: 'auto' },
+  bulkActionBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: '#FFFFFF',
+    borderWidth: 1, borderColor: '#E5E7EB',
+  },
+  bulkActionBtnDisabled: { opacity: 0.5 },
+  bulkDeleteBtn: {},
+  bulkActionBtnText: { fontSize: 12, fontWeight: '600', color: '#6366F1' },
   list: { flex: 1 },
   txItem: {
     flexDirection: 'row',
@@ -295,6 +506,12 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   txItemSelected: { borderColor: '#6366F1', backgroundColor: '#EEF2FF' },
+  txItemBulkSelected: { borderColor: '#6366F1', backgroundColor: '#EEF2FF' },
+  bulkCheckbox: {
+    width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: '#D1D5DB',
+    alignItems: 'center', justifyContent: 'center', marginRight: 10,
+  },
+  bulkCheckboxSelected: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
   txIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   txDetails: { flex: 1 },
   txDescription: { fontSize: 15, fontWeight: '600', color: '#111827' },
@@ -305,4 +522,32 @@ const styles = StyleSheet.create({
   txDeleteBtn: { backgroundColor: '#FEF2F2' },
   emptyState: { alignItems: 'center', paddingTop: 60 },
   emptyText: { color: '#9CA3AF', marginTop: 12, fontSize: 15 },
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end',
+  },
+  bottomSheet: {
+    backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingTop: 12, paddingBottom: 32, maxHeight: '70%',
+  },
+  bottomSheetHandle: {
+    width: 40, height: 4, backgroundColor: '#E5E7EB', borderRadius: 2,
+    alignSelf: 'center', marginBottom: 16,
+  },
+  bottomSheetTitle: {
+    fontSize: 16, fontWeight: '700', color: '#111827',
+    paddingHorizontal: 20, marginBottom: 12,
+  },
+  bottomSheetList: { paddingHorizontal: 12 },
+  bottomSheetItem: {
+    flexDirection: 'row', alignItems: 'center', padding: 12,
+    backgroundColor: '#F9FAFB', borderRadius: 12, marginBottom: 6, gap: 12,
+  },
+  catIconSmall: {
+    width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center',
+  },
+  sourceIconSmall: {
+    width: 34, height: 34, borderRadius: 9, backgroundColor: '#EEF2FF',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  bottomSheetItemText: { flex: 1, fontSize: 15, fontWeight: '500', color: '#111827' },
 });
