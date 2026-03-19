@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,13 +8,25 @@ import {
   RefreshControl,
   Animated,
   Alert,
+  Modal,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { Transaction, getTransactions, getMonthSummary, deleteTransaction } from '../../lib/database';
+import {
+  Transaction,
+  getTransactions,
+  getMonthSummary,
+  deleteTransaction,
+  bulkDeleteTransactions,
+  bulkUpdateTransactionCategory,
+  bulkUpdateTransactionBank,
+  getCategories,
+  Category,
+} from '../../lib/database';
 import { getPaymentSources } from '../../lib/paymentSources';
 import AddTransactionModal from '../../components/AddTransactionModal';
 import SmsImportModal from '../../components/SmsImportModal';
+import { useTheme } from '../../lib/theme';
 
 function formatCurrency(amount: number): string {
   return '₹' + amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -52,6 +64,7 @@ function formatDate(dateStr: string): string {
 }
 
 export default function HomeScreen() {
+  const { colors } = useTheme();
   const [monthOffset, setMonthOffset] = useState(0);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [summary, setSummary] = useState({ spent: 0, received: 0, count: 0 });
@@ -61,7 +74,12 @@ export default function HomeScreen() {
   const [smsModalVisible, setSmsModalVisible] = useState(false);
   const [editTx, setEditTx] = useState<Transaction | null>(null);
   const [paymentSources, setPaymentSources] = useState<string[]>([]);
-  const slideAnim = useState(new Animated.Value(0))[0];
+  const slideAnim] = useState(new Animated.Value(0));
+
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkActionModal, setBulkActionModal] = useState<'category' | 'source' | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
 
   const monthKey = getMonthKey(monthOffset);
 
@@ -73,13 +91,11 @@ export default function HomeScreen() {
     setTransactions(txs);
     setSummary(sum);
     setPrevSummary(prev);
+    setCategories(getCategories());
+    getPaymentSources().then(setPaymentSources);
   }, [monthKey, monthOffset]);
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
-
-  useEffect(() => {
-    getPaymentSources().then(setPaymentSources);
-  }, []);
 
   const navigateMonth = (dir: number) => {
     Animated.sequence([
@@ -101,37 +117,84 @@ export default function HomeScreen() {
       `Delete ₹${tx.amount.toFixed(2)} — ${tx.description || tx.category}?`,
       [
         { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => { deleteTransaction(tx.id); loadData(); } },
+      ]
+    );
+  };
+
+  const toggleBulkMode = () => {
+    setBulkMode(prev => !prev);
+    setSelectedIds(new Set());
+  };
+
+  const toggleBulkSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelectedIds(new Set(transactions.map(t => t.id)));
+  const deselectAll = () => setSelectedIds(new Set());
+
+  const handleBulkDelete = () => {
+    if (selectedIds.size === 0) return;
+    Alert.alert(
+      'Delete Transactions',
+      `Delete ${selectedIds.size} selected transaction${selectedIds.size !== 1 ? 's' : ''}? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Delete All',
           style: 'destructive',
-          onPress: () => { deleteTransaction(tx.id); loadData(); },
+          onPress: () => {
+            bulkDeleteTransactions([...selectedIds]);
+            setSelectedIds(new Set());
+            setBulkMode(false);
+            loadData();
+          },
         },
       ]
     );
   };
 
-  const net = summary.received - summary.spent;
-  const dailyAvg = summary.count > 0 ? summary.spent / new Date(monthKey + '-01').toISOString().slice(0, 10).split('-')[2].length : 0;
-  const spentChange = prevSummary.spent > 0 ? ((summary.spent - prevSummary.spent) / prevSummary.spent) * 100 : 0;
+  const handleBulkCategorySelect = (category: string) => {
+    bulkUpdateTransactionCategory([...selectedIds], category);
+    setBulkActionModal(null);
+    setSelectedIds(new Set());
+    setBulkMode(false);
+    loadData();
+  };
 
+  const handleBulkSourceSelect = (source: string) => {
+    bulkUpdateTransactionBank([...selectedIds], source);
+    setBulkActionModal(null);
+    setSelectedIds(new Set());
+    setBulkMode(false);
+    loadData();
+  };
+
+  const net = summary.received - summary.spent;
+  const spentChange = prevSummary.spent > 0 ? ((summary.spent - prevSummary.spent) / prevSummary.spent) * 100 : 0;
   const grouped = groupByDate(transactions);
   const sortedDates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
 
   return (
-    <View style={styles.container}>
-      <View style={styles.monthNav}>
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
+      <View style={[styles.monthNav, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => navigateMonth(-1)} style={styles.navBtn}>
-          <Feather name="chevron-left" size={22} color="#6366F1" />
+          <Feather name="chevron-left" size={22} color={colors.primary} />
         </TouchableOpacity>
-        <Animated.Text style={[styles.monthLabel, { transform: [{ translateX: slideAnim }] }]}>
+        <Animated.Text style={[styles.monthLabel, { color: colors.text, transform: [{ translateX: slideAnim }] }]}>
           {getMonthLabel(monthKey)}
         </Animated.Text>
         <TouchableOpacity
           onPress={() => navigateMonth(1)}
-          style={[styles.navBtn, monthOffset >= 0 && styles.navBtnDisabled]}
+          style={[styles.navBtn, monthOffset >= 0 && { opacity: 0.3 }]}
           disabled={monthOffset >= 0}
         >
-          <Feather name="chevron-right" size={22} color={monthOffset >= 0 ? '#D1D5DB' : '#6366F1'} />
+          <Feather name="chevron-right" size={22} color={colors.primary} />
         </TouchableOpacity>
       </View>
 
@@ -139,21 +202,21 @@ export default function HomeScreen() {
         style={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        <View style={styles.summaryCard}>
+        <View style={[styles.summaryCard, { backgroundColor: colors.card }]}>
           <View style={styles.summaryRow}>
             <View style={styles.summaryItem}>
-              <Text style={styles.summaryLabel}>Spent</Text>
-              <Text style={[styles.summaryAmount, { color: '#EF4444' }]}>{formatCurrency(summary.spent)}</Text>
+              <Text style={[styles.summaryLabel, { color: colors.textFaint }]}>Spent</Text>
+              <Text style={[styles.summaryAmount, { color: colors.danger }]}>{formatCurrency(summary.spent)}</Text>
             </View>
-            <View style={styles.summaryDivider} />
+            <View style={[styles.summaryDivider, { backgroundColor: colors.border }]} />
             <View style={styles.summaryItem}>
-              <Text style={styles.summaryLabel}>Received</Text>
-              <Text style={[styles.summaryAmount, { color: '#10B981' }]}>{formatCurrency(summary.received)}</Text>
+              <Text style={[styles.summaryLabel, { color: colors.textFaint }]}>Received</Text>
+              <Text style={[styles.summaryAmount, { color: colors.success }]}>{formatCurrency(summary.received)}</Text>
             </View>
-            <View style={styles.summaryDivider} />
+            <View style={[styles.summaryDivider, { backgroundColor: colors.border }]} />
             <View style={styles.summaryItem}>
-              <Text style={styles.summaryLabel}>Net</Text>
-              <Text style={[styles.summaryAmount, { color: net >= 0 ? '#10B981' : '#EF4444' }]}>
+              <Text style={[styles.summaryLabel, { color: colors.textFaint }]}>Net</Text>
+              <Text style={[styles.summaryAmount, { color: net >= 0 ? colors.success : colors.danger }]}>
                 {formatCurrency(Math.abs(net))}
               </Text>
             </View>
@@ -161,86 +224,150 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.chipsRow}>
-          <View style={styles.chip}>
-            <Feather name="trending-up" size={12} color="#6B7280" />
-            <Text style={styles.chipLabel}>Daily Avg</Text>
-            <Text style={styles.chipValue}>{formatCurrency(summary.count > 0 ? summary.spent / 30 : 0)}</Text>
+          <View style={[styles.chip, { backgroundColor: colors.card }]}>
+            <Feather name="trending-up" size={12} color={colors.textMuted} />
+            <Text style={[styles.chipLabel, { color: colors.textFaint }]}>Daily Avg</Text>
+            <Text style={[styles.chipValue, { color: colors.textSub }]}>{formatCurrency(summary.count > 0 ? summary.spent / 30 : 0)}</Text>
           </View>
-          <View style={styles.chip}>
-            <Feather name="list" size={12} color="#6B7280" />
-            <Text style={styles.chipLabel}>Transactions</Text>
-            <Text style={styles.chipValue}>{summary.count}</Text>
+          <View style={[styles.chip, { backgroundColor: colors.card }]}>
+            <Feather name="list" size={12} color={colors.textMuted} />
+            <Text style={[styles.chipLabel, { color: colors.textFaint }]}>Transactions</Text>
+            <Text style={[styles.chipValue, { color: colors.textSub }]}>{summary.count}</Text>
           </View>
-          <View style={styles.chip}>
-            <Feather name={spentChange >= 0 ? 'trending-up' : 'trending-down'} size={12} color={spentChange >= 0 ? '#EF4444' : '#10B981'} />
-            <Text style={styles.chipLabel}>vs Last Month</Text>
-            <Text style={[styles.chipValue, { color: spentChange >= 0 ? '#EF4444' : '#10B981' }]}>
+          <View style={[styles.chip, { backgroundColor: colors.card }]}>
+            <Feather name={spentChange >= 0 ? 'trending-up' : 'trending-down'} size={12} color={spentChange >= 0 ? colors.danger : colors.success} />
+            <Text style={[styles.chipLabel, { color: colors.textFaint }]}>vs Last Month</Text>
+            <Text style={[styles.chipValue, { color: spentChange >= 0 ? colors.danger : colors.success }]}>
               {spentChange >= 0 ? '+' : ''}{spentChange.toFixed(1)}%
             </Text>
           </View>
         </View>
 
-        <View style={styles.smsImportRow}>
-          <TouchableOpacity style={styles.smsImportBtn} onPress={() => setSmsModalVisible(true)}>
-            <Feather name="message-square" size={16} color="#6366F1" />
-            <Text style={styles.smsImportText}>Import SMS</Text>
+        <View style={styles.actionRow}>
+          <TouchableOpacity style={[styles.smsImportBtn, { backgroundColor: colors.primaryBg, borderColor: colors.primaryBorder }]} onPress={() => setSmsModalVisible(true)}>
+            <Feather name="message-square" size={16} color={colors.primary} />
+            <Text style={[styles.smsImportText, { color: colors.primary }]}>Import SMS</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.bulkToggleBtn, { backgroundColor: bulkMode ? colors.primary : colors.primaryBg, borderColor: colors.primaryBorder }]}
+            onPress={toggleBulkMode}
+          >
+            <Feather name="check-square" size={16} color={bulkMode ? '#FFFFFF' : colors.primary} />
+            <Text style={[styles.smsImportText, { color: bulkMode ? '#FFFFFF' : colors.primary }]}>
+              {bulkMode ? 'Cancel' : 'Select'}
+            </Text>
           </TouchableOpacity>
         </View>
 
+        {bulkMode && (
+          <View style={[styles.bulkBar, { backgroundColor: colors.primaryBg, borderBottomColor: colors.primaryBorder }]}>
+            <Text style={[styles.bulkCount, { color: colors.primary }]}>{selectedIds.size} selected</Text>
+            <TouchableOpacity style={[styles.bulkSelectBtn, { backgroundColor: colors.primaryBorder }]} onPress={selectAll}>
+              <Text style={[styles.bulkSelectBtnText, { color: colors.card }]}>All</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.bulkSelectBtn, { backgroundColor: colors.primaryBorder }]} onPress={deselectAll}>
+              <Text style={[styles.bulkSelectBtnText, { color: colors.card }]}>None</Text>
+            </TouchableOpacity>
+            <View style={styles.bulkActions}>
+              <TouchableOpacity
+                style={[styles.bulkActionBtn, { backgroundColor: colors.card, borderColor: colors.border, opacity: selectedIds.size === 0 ? 0.4 : 1 }]}
+                onPress={() => selectedIds.size > 0 && setBulkActionModal('category')}
+              >
+                <Feather name="tag" size={13} color={colors.primary} />
+                <Text style={[styles.bulkActionBtnText, { color: colors.primary }]}>Category</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.bulkActionBtn, { backgroundColor: colors.card, borderColor: colors.border, opacity: selectedIds.size === 0 ? 0.4 : 1 }]}
+                onPress={() => selectedIds.size > 0 && setBulkActionModal('source')}
+              >
+                <Feather name="credit-card" size={13} color={colors.success} />
+                <Text style={[styles.bulkActionBtnText, { color: colors.success }]}>Source</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.bulkActionBtn, { backgroundColor: colors.card, borderColor: colors.border, opacity: selectedIds.size === 0 ? 0.4 : 1 }]}
+                onPress={handleBulkDelete}
+              >
+                <Feather name="trash-2" size={13} color={colors.danger} />
+                <Text style={[styles.bulkActionBtnText, { color: colors.danger }]}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {sortedDates.length === 0 ? (
           <View style={styles.emptyState}>
-            <Feather name="inbox" size={48} color="#D1D5DB" />
-            <Text style={styles.emptyTitle}>No transactions yet</Text>
-            <Text style={styles.emptyText}>Tap + to add your first transaction or import from SMS</Text>
+            <Feather name="inbox" size={48} color={colors.textFaint} />
+            <Text style={[styles.emptyTitle, { color: colors.textSub }]}>No transactions yet</Text>
+            <Text style={[styles.emptyText, { color: colors.textFaint }]}>Tap + to add your first transaction or import from SMS</Text>
           </View>
         ) : (
           sortedDates.map(date => (
             <View key={date} style={styles.dateGroup}>
               <View style={styles.dateHeader}>
-                <Text style={styles.dateLabel}>{formatDate(date)}</Text>
-                <Text style={styles.dateTotalLabel}>
-                  {formatCurrency(
-                    grouped[date].reduce((sum, tx) => sum + (tx.type === 'debit' ? -tx.amount : tx.amount), 0)
-                  )}
+                <Text style={[styles.dateLabel, { color: colors.textFaint }]}>{formatDate(date)}</Text>
+                <Text style={[styles.dateTotalLabel, { color: colors.textSub }]}>
+                  {formatCurrency(grouped[date].reduce((sum, tx) => sum + (tx.type === 'debit' ? -tx.amount : tx.amount), 0))}
                 </Text>
               </View>
-              {grouped[date].map(tx => (
-                <TouchableOpacity
-                  key={tx.id}
-                  style={styles.txItem}
-                  onPress={() => { setEditTx(tx); setAddModalVisible(true); }}
-                  onLongPress={() => handleDelete(tx)}
-                >
-                  <View style={[styles.txIcon, { backgroundColor: tx.type === 'credit' ? '#D1FAE5' : '#FEE2E2' }]}>
-                    <Feather
-                      name={tx.type === 'credit' ? 'arrow-down-left' : 'arrow-up-right'}
-                      size={16}
-                      color={tx.type === 'credit' ? '#10B981' : '#EF4444'}
-                    />
-                  </View>
-                  <View style={styles.txDetails}>
-                    <Text style={styles.txDescription} numberOfLines={1}>
-                      {tx.description || tx.category}
+              {grouped[date].map(tx => {
+                const isBulkSelected = selectedIds.has(tx.id);
+                return (
+                  <TouchableOpacity
+                    key={tx.id}
+                    style={[
+                      styles.txItem,
+                      { backgroundColor: colors.card },
+                      isBulkSelected && { borderColor: colors.primary, backgroundColor: colors.primaryBg },
+                    ]}
+                    onPress={() => {
+                      if (bulkMode) {
+                        toggleBulkSelect(tx.id);
+                      } else {
+                        setEditTx(tx);
+                        setAddModalVisible(true);
+                      }
+                    }}
+                    onLongPress={() => !bulkMode && handleDelete(tx)}
+                    activeOpacity={0.7}
+                  >
+                    {bulkMode && (
+                      <View style={[styles.bulkCheckbox, { borderColor: colors.border }, isBulkSelected && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
+                        {isBulkSelected && <Feather name="check" size={12} color="#FFFFFF" />}
+                      </View>
+                    )}
+                    <View style={[styles.txIcon, { backgroundColor: tx.type === 'credit' ? colors.successBg : colors.dangerBg }]}>
+                      <Feather
+                        name={tx.type === 'credit' ? 'arrow-down-left' : 'arrow-up-right'}
+                        size={16}
+                        color={tx.type === 'credit' ? colors.success : colors.danger}
+                      />
+                    </View>
+                    <View style={styles.txDetails}>
+                      <Text style={[styles.txDescription, { color: colors.text }]} numberOfLines={1}>
+                        {tx.description || tx.category}
+                      </Text>
+                      <Text style={[styles.txMeta, { color: colors.textFaint }]}>{tx.category}{tx.bank ? ` • ${tx.bank}` : ''}</Text>
+                    </View>
+                    <Text style={[styles.txAmount, { color: tx.type === 'credit' ? colors.success : colors.danger }]}>
+                      {tx.type === 'credit' ? '+' : '-'}{formatCurrency(tx.amount)}
                     </Text>
-                    <Text style={styles.txMeta}>{tx.category}{tx.bank ? ` • ${tx.bank}` : ''}</Text>
-                  </View>
-                  <Text style={[styles.txAmount, { color: tx.type === 'credit' ? '#10B981' : '#EF4444' }]}>
-                    {tx.type === 'credit' ? '+' : '-'}{formatCurrency(tx.amount)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           ))
         )}
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => { setEditTx(null); setAddModalVisible(true); }}
-      >
-        <Feather name="plus" size={28} color="#FFFFFF" />
-      </TouchableOpacity>
+      {!bulkMode && (
+        <TouchableOpacity
+          style={[styles.fab, { backgroundColor: colors.primary }]}
+          onPress={() => { setEditTx(null); setAddModalVisible(true); }}
+        >
+          <Feather name="plus" size={28} color="#FFFFFF" />
+        </TouchableOpacity>
+      )}
 
       <AddTransactionModal
         visible={addModalVisible}
@@ -253,127 +380,107 @@ export default function HomeScreen() {
       <SmsImportModal
         visible={smsModalVisible}
         onClose={() => setSmsModalVisible(false)}
-        onImportComplete={(count) => {
-          loadData();
-          setSmsModalVisible(false);
-        }}
+        onImportComplete={() => { loadData(); setSmsModalVisible(false); }}
       />
+
+      <Modal
+        visible={bulkActionModal !== null}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setBulkActionModal(null)}
+      >
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setBulkActionModal(null)}>
+          <View style={[styles.bottomSheet, { backgroundColor: colors.card }]} onStartShouldSetResponder={() => true}>
+            <View style={[styles.bottomSheetHandle, { backgroundColor: colors.border }]} />
+            <Text style={[styles.bottomSheetTitle, { color: colors.text }]}>
+              {bulkActionModal === 'category'
+                ? `Set Category for ${selectedIds.size} transactions`
+                : `Set Payment Source for ${selectedIds.size} transactions`}
+            </Text>
+            <ScrollView style={styles.bottomSheetList} showsVerticalScrollIndicator={false}>
+              {bulkActionModal === 'category' && categories.map(cat => (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[styles.bottomSheetItem, { backgroundColor: colors.cardAlt }]}
+                  onPress={() => handleBulkCategorySelect(cat.name)}
+                >
+                  <View style={[styles.catIconSmall, { backgroundColor: (cat.color || '#6B7280') + '22' }]}>
+                    <Feather name={(cat.icon || 'more-horizontal') as any} size={16} color={cat.color || '#6B7280'} />
+                  </View>
+                  <Text style={[styles.bottomSheetItemText, { color: colors.text }]}>{cat.name}</Text>
+                  <Feather name="chevron-right" size={16} color={colors.textFaint} />
+                </TouchableOpacity>
+              ))}
+              {bulkActionModal === 'source' && paymentSources.map(source => (
+                <TouchableOpacity
+                  key={source}
+                  style={[styles.bottomSheetItem, { backgroundColor: colors.cardAlt }]}
+                  onPress={() => handleBulkSourceSelect(source)}
+                >
+                  <View style={[styles.catIconSmall, { backgroundColor: colors.primaryBg }]}>
+                    <Feather name="credit-card" size={16} color={colors.primary} />
+                  </View>
+                  <Text style={[styles.bottomSheetItemText, { color: colors.text }]}>{source}</Text>
+                  <Feather name="chevron-right" size={16} color={colors.textFaint} />
+                </TouchableOpacity>
+              ))}
+              <View style={{ height: 20 }} />
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9FAFB' },
-  monthNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
+  container: { flex: 1 },
+  monthNav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1 },
   navBtn: { padding: 8 },
-  navBtnDisabled: { opacity: 0.3 },
-  monthLabel: { fontSize: 17, fontWeight: '700', color: '#111827' },
+  monthLabel: { fontSize: 17, fontWeight: '700' },
   scroll: { flex: 1 },
-  summaryCard: {
-    margin: 16,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
-  },
+  summaryCard: { margin: 16, borderRadius: 16, padding: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
   summaryRow: { flexDirection: 'row', alignItems: 'center' },
   summaryItem: { flex: 1, alignItems: 'center' },
-  summaryLabel: { fontSize: 12, color: '#9CA3AF', fontWeight: '500', marginBottom: 4 },
+  summaryLabel: { fontSize: 12, fontWeight: '500', marginBottom: 4 },
   summaryAmount: { fontSize: 16, fontWeight: '700' },
-  summaryDivider: { width: 1, height: 40, backgroundColor: '#E5E7EB' },
+  summaryDivider: { width: 1, height: 40 },
   chipsRow: { flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 12 },
-  chip: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    padding: 10,
-    alignItems: 'center',
-    gap: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  chipLabel: { fontSize: 10, color: '#9CA3AF', fontWeight: '500' },
-  chipValue: { fontSize: 13, fontWeight: '700', color: '#374151' },
-  smsImportRow: { paddingHorizontal: 16, marginBottom: 16 },
-  smsImportBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#EEF2FF',
-    borderRadius: 10,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#C7D2FE',
-  },
-  smsImportText: { fontSize: 14, fontWeight: '600', color: '#6366F1' },
+  chip: { flex: 1, borderRadius: 10, padding: 10, alignItems: 'center', gap: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
+  chipLabel: { fontSize: 10, fontWeight: '500' },
+  chipValue: { fontSize: 13, fontWeight: '700' },
+  actionRow: { flexDirection: 'row', paddingHorizontal: 16, marginBottom: 4, gap: 8 },
+  smsImportBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 10, paddingVertical: 10, borderWidth: 1 },
+  bulkToggleBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, borderWidth: 1 },
+  smsImportText: { fontSize: 14, fontWeight: '600' },
+  bulkBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, gap: 6, marginBottom: 4 },
+  bulkCount: { fontSize: 13, fontWeight: '700', minWidth: 70 },
+  bulkSelectBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  bulkSelectBtnText: { fontSize: 12, fontWeight: '600' },
+  bulkActions: { flexDirection: 'row', gap: 6, marginLeft: 'auto' },
+  bulkActionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1 },
+  bulkActionBtnText: { fontSize: 11, fontWeight: '600' },
+  bulkCheckbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
   dateGroup: { paddingHorizontal: 16, marginBottom: 8 },
-  dateHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  dateLabel: { fontSize: 13, fontWeight: '600', color: '#9CA3AF' },
-  dateTotalLabel: { fontSize: 13, fontWeight: '600', color: '#374151' },
-  txItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  txIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
+  dateHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8 },
+  dateLabel: { fontSize: 13, fontWeight: '600' },
+  dateTotalLabel: { fontSize: 13, fontWeight: '600' },
+  txItem: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, padding: 12, marginBottom: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1, borderWidth: 1.5, borderColor: 'transparent' },
+  txIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   txDetails: { flex: 1 },
-  txDescription: { fontSize: 15, fontWeight: '600', color: '#111827' },
-  txMeta: { fontSize: 12, color: '#9CA3AF', marginTop: 2 },
+  txDescription: { fontSize: 15, fontWeight: '600' },
+  txMeta: { fontSize: 12, marginTop: 2 },
   txAmount: { fontSize: 15, fontWeight: '700' },
   emptyState: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 32 },
-  emptyTitle: { fontSize: 18, fontWeight: '600', color: '#374151', marginTop: 16 },
-  emptyText: { fontSize: 14, color: '#9CA3AF', textAlign: 'center', marginTop: 8 },
-  fab: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#6366F1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#6366F1',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
-  },
+  emptyTitle: { fontSize: 18, fontWeight: '600', marginTop: 16 },
+  emptyText: { fontSize: 14, textAlign: 'center', marginTop: 8 },
+  fab: { position: 'absolute', bottom: 24, right: 24, width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', shadowColor: '#6366F1', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 8 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  bottomSheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 12, paddingBottom: 32, maxHeight: '70%' },
+  bottomSheetHandle: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
+  bottomSheetTitle: { fontSize: 16, fontWeight: '700', paddingHorizontal: 20, marginBottom: 12 },
+  bottomSheetList: { paddingHorizontal: 12 },
+  bottomSheetItem: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 12, marginBottom: 6, gap: 12 },
+  catIconSmall: { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  bottomSheetItemText: { flex: 1, fontSize: 15, fontWeight: '500' },
 });

@@ -310,11 +310,11 @@ export function updateCategory(id: number, cat: Pick<Category, 'name' | 'icon' |
 
 export function deleteCategory(id: number) {
   if (Platform.OS === 'web') {
-    webStore.categories = webStore.categories.filter(c => c.id !== id || c.isDefault);
+    webStore.categories = webStore.categories.filter(c => c.id !== id);
     return;
   }
   const db = getDb();
-  db.runSync(`DELETE FROM categories WHERE id=? AND isDefault=0`, [id]);
+  db.runSync(`DELETE FROM categories WHERE id=?`, [id]);
 }
 
 export function getMonthSummary(month: string): { spent: number; received: number; count: number } {

@@ -8,6 +8,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useTheme } from '../lib/theme';
 
 export const VALID_ICONS = [
   'coffee', 'truck', 'shopping-bag', 'zap', 'film', 'heart', 'package',
@@ -40,38 +41,47 @@ export default function CategoryForm({
   onCancel,
   saveLabel = 'Save',
 }: Props) {
+  const { colors } = useTheme();
   const [name, setName] = useState(initialName);
-  const [icon, setIcon] = useState(initialIcon);
+  const [icon, setIcon] = useState(VALID_ICONS.includes(initialIcon) ? initialIcon : 'more-horizontal');
   const [color, setColor] = useState(initialColor);
 
   return (
     <View>
       <TextInput
-        style={styles.input}
+        style={[styles.input, { backgroundColor: colors.inputBg, color: colors.inputText }]}
         value={name}
         onChangeText={setName}
         placeholder="Category name"
-        placeholderTextColor="#9CA3AF"
+        placeholderTextColor={colors.placeholder}
         autoFocus
       />
-      <Text style={styles.fieldLabel}>Icon</Text>
+      <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Icon</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
         {VALID_ICONS.map(ic => (
           <TouchableOpacity
             key={ic}
-            style={[styles.iconChoice, icon === ic && styles.iconChoiceActive]}
+            style={[
+              styles.iconChoice,
+              { backgroundColor: colors.cardAlt },
+              icon === ic && { backgroundColor: colors.primaryBg, borderColor: colors.primary, borderWidth: 1.5 },
+            ]}
             onPress={() => setIcon(ic)}
           >
-            <Feather name={ic as any} size={18} color={icon === ic ? '#6366F1' : '#6B7280'} />
+            <Feather name={ic as any} size={18} color={icon === ic ? colors.primary : colors.textMuted} />
           </TouchableOpacity>
         ))}
       </ScrollView>
-      <Text style={styles.fieldLabel}>Color</Text>
+      <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Color</Text>
       <View style={styles.colorRow}>
         {CATEGORY_COLORS.map(c => (
           <TouchableOpacity
             key={c}
-            style={[styles.colorDot, { backgroundColor: c }, color === c && styles.colorDotActive]}
+            style={[
+              styles.colorDot,
+              { backgroundColor: c },
+              color === c && { borderWidth: 3, borderColor: colors.text, transform: [{ scale: 1.15 }] },
+            ]}
             onPress={() => setColor(c)}
           />
         ))}
@@ -85,8 +95,11 @@ export default function CategoryForm({
           <Text style={styles.saveBtnText}>{saveLabel}</Text>
         </TouchableOpacity>
         {onCancel && (
-          <TouchableOpacity style={styles.cancelBtn} onPress={onCancel}>
-            <Text style={styles.cancelBtnText}>Cancel</Text>
+          <TouchableOpacity
+            style={[styles.cancelBtn, { backgroundColor: colors.cardAlt }]}
+            onPress={onCancel}
+          >
+            <Text style={[styles.cancelBtnText, { color: colors.textSub }]}>Cancel</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -96,31 +109,26 @@ export default function CategoryForm({
 
 const styles = StyleSheet.create({
   input: {
-    backgroundColor: '#F3F4F6',
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
-    color: '#111827',
     marginBottom: 12,
   },
   fieldLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#6B7280',
     marginBottom: 8,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  iconChoice: { padding: 10, borderRadius: 8, marginRight: 6, backgroundColor: '#F3F4F6' },
-  iconChoiceActive: { backgroundColor: '#EEF2FF', borderWidth: 1.5, borderColor: '#6366F1' },
+  iconChoice: { padding: 10, borderRadius: 8, marginRight: 6 },
   colorRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   colorDot: { width: 30, height: 30, borderRadius: 15 },
-  colorDotActive: { borderWidth: 3, borderColor: '#111827', transform: [{ scale: 1.15 }] },
   catBtns: { flexDirection: 'row', gap: 8 },
   saveBtn: { flex: 1, backgroundColor: '#6366F1', borderRadius: 8, paddingVertical: 11, alignItems: 'center' },
   saveBtnDisabled: { backgroundColor: '#D1D5DB' },
   saveBtnText: { color: '#FFFFFF', fontWeight: '600', fontSize: 14 },
-  cancelBtn: { flex: 1, backgroundColor: '#F3F4F6', borderRadius: 8, paddingVertical: 11, alignItems: 'center' },
-  cancelBtnText: { color: '#374151', fontWeight: '600', fontSize: 14 },
+  cancelBtn: { flex: 1, borderRadius: 8, paddingVertical: 11, alignItems: 'center' },
+  cancelBtnText: { fontWeight: '600', fontSize: 14 },
 });
