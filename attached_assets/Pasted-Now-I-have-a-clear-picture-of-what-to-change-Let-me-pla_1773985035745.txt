@@ -1,0 +1,41 @@
+Now I have a clear picture of what to change. Let me plan out all 4 changes:
+1. Long-press to select (instead of Select button)
+
+    Remove the "Select" / "Cancel" toggle button from the action row
+    On onLongPress of any transaction row: enter bulk mode AND select that transaction
+    Add a cancel X button shown in the bulk bar when in bulk mode (so users can exit)
+    On single tap in bulk mode: select/deselect
+    On single tap outside bulk mode: edit transaction
+
+Changes needed in: index.tsx and transactions.tsx
+2. Horizontal scroll for bulk action chips
+
+The bulk bar currently stacks everything in one row without scrolling. I'm going to restructure it into two rows: the top row shows the count and action buttons, while the bottom row contains the action chips in a horizontally scrollable container so they don't overflow.
+
+For the theme switching in Settings, I need to handle the async nature of AsyncStorage. I'll store the preference there and create a custom hook that reads it, but I need to figure out how to handle the initial load since AsyncStorage is asynchronous.
+
+A simpler approach would be to use a module-level store with a listener pattern—I'll set up a theme override variable and a list of listeners that get notified whenever the theme changes, then create a hook that subscribes to those changes and forces a re-render when needed.
+
+For the settings screen, I'd persist the user's choice to AsyncStorage and call the setter function whenever they toggle the theme.
+
+Now looking at the balance tracking problem—the user needs to track balances per source (like HDFC and SBI separately), exclude internal transfers between sources from income/expense calculations, and handle the timing issue where money received in one month might actually be spent in the next.
+
+My approach is to add a "Transfer" transaction type with a destination source field, exclude these from analytics, and calculate per-source balance as the opening balance plus credits minus debits, accounting for transfers in and out. For the database, I'd add a transfer destination column that's null for regular transactions, and when processing transfers, the amount debits from one source and credits to another. In the analytics view, the running balance for each source would be the opening balance plus all credits minus all debits, excluding transfer transactions from the calculation.
+
+For the UI, I'll add Transfer as a third option in the transaction modal—when selected, it shows a "From" field and a "To" dropdown instead of requiring a category. The transfer gets stored as a single transaction record with the transfer type and destination. This naturally handles the salary carry-forward scenario: if HDFC ends the month with ₹20K, that balance automatically rolls into the next month's running total, and I can display it in analytics showing the source balance with the previous month's carry-forward amount broken out. This is a much cleaner solution than the current carry-forward toggle.
+
+Let me now plan the implementation. For the database, I need to add a transfer_to column, create a function to get per-source balances, update the month summary to exclude transfers, and add a transfer transaction function. The AddTransactionModal needs a transfer type with a "To" field for selecting the destination source. Analytics should display source balances calculated from opening balances plus transaction sums, and settings needs per-source opening balance configuration. For the UI, I'll implement long-press selection on transactions with horizontal scrolling for bulk action chips.
+
+This is substantial work, so I should scope it carefully. The core balance tracking requires schema updates, new database queries, modal changes to support transfers, and analytics/settings updates to manage per-source opening balances. I also need to think through the bulk selection interaction pattern. think about what "opening balance" means:
+
+    User sets it once per source in Settings
+    Stored in AsyncStorage as source_balance_${sourceName}
+    Running balance = opening balance + all-time credits (non-transfer) - all-time debits (non-transfer) + transfers_in - transfers_out
+
+The "all-time" part is tricky though—if there are many historical transactions, I need to make sure the opening balance represents the starting point when they began tracking, not some arbitrary past date.
+
+So the formula simplifies to: opening balance + (all credits - all debits - transfer outs + transfer ins). The carry-forward from the previous month becomes implicit—if HDFC closed at ₹20K last month, this month starts with that same ₹20K, and I can display it by calculating last month's closing balance.
+
+Now I need to systematically implement this across the codebase. I'm looking at modifying the theme file for manual overrides, updating the database layer to add transfer columns and balance queries, refactoring the transaction tabs to support long-press selection with horizontal chips, adding theme and opening balance controls to settings, and updating analytics.
+
+I still need to review the remaining files and then start writing the implementation.
