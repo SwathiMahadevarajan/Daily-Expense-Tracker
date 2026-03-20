@@ -42,13 +42,18 @@ artifacts/expense-tracker/
 
 ## Key Features
 
+### Dark Mode
+- Full dark/light mode support via `lib/theme.ts` using `useColorScheme()`
+- All screens and modals use `useTheme()` hook; no hardcoded colors anywhere
+- Dark palette: bg `#0F172A`, card `#1E293B`, primary `#818CF8`
+
 ### Home Screen
 - Month navigator with slide animation
 - Spent/Received/Net summary card
 - Summary chips: Daily Avg, Transaction Count, vs-last-month %
 - Transaction list grouped by date (tap to edit, long-press to delete)
-- Floating "+ Add" button
-- "Import SMS" button
+- Floating "+ Add" button, "Import SMS" button
+- **Bulk operations**: Select mode with select-all/none, bulk category update, bulk payment source update, bulk delete
 
 ### SMS Import (Android native build only)
 - User-triggered (tap button), not automatic
@@ -63,14 +68,25 @@ artifacts/expense-tracker/
 - On non-Android: shows "Android Only" message
 
 ### Analytics Screen
-- Month/year navigator
-- Month-over-month comparison card
-- Spending by category with bar chart
+- Month/year navigator with Overview / Trends / Insights tabs
+- **Salary Carry-forward toggle**: include previous month's received income in current month's totals (persisted per-month in AsyncStorage)
+- KPI cards: Total Spent, Total Received (effective), Net, Savings Rate, Daily Avg
+- Monthly Budget: set, track, projected spend alert
+- Spending by category ranked bar chart
+- Top 5 expenses + top income sources
+- 6-month trend chart, weekly breakdown, income vs expense comparison
+- Day-of-week spending heatmap, source stats (SMS vs manual), efficiency metrics
+
+### All Transactions Screen
+- Full transaction list with search and category filter
+- **Bulk operations**: same bulk select/edit/delete as Home tab
 
 ### Settings Screen
 - Evening reminder toggle + time (local notifications)
 - Payment sources CRUD (stored in AsyncStorage)
 - Categories CRUD with icon picker + color picker
+- **Crash fix**: `isDefault` (SQLite integer) now cast with `!!` to prevent RN `{0 && <View/>}` crash
+- Built-in categories can now be edited/deleted (confirmation dialog shown)
 
 ## Database Schema
 

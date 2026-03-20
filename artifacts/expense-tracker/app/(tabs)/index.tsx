@@ -74,7 +74,7 @@ export default function HomeScreen() {
   const [smsModalVisible, setSmsModalVisible] = useState(false);
   const [editTx, setEditTx] = useState<Transaction | null>(null);
   const [paymentSources, setPaymentSources] = useState<string[]>([]);
-  const slideAnim] = useState(new Animated.Value(0));
+  const [slideAnim] = useState(new Animated.Value(0));
 
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
