@@ -208,6 +208,35 @@ export function bulkDeleteTransactions(ids: number[]) {
   db.runSync(`DELETE FROM transactions WHERE id IN (${placeholders})`, ids);
 }
 
+export function deleteTransactionsByMonth(month: string) {
+  if (Platform.OS === 'web') {
+    webStore.transactions = webStore.transactions.filter(t => !t.date.startsWith(month));
+    return;
+  }
+  const db = getDb();
+  db.runSync(`DELETE FROM transactions WHERE date LIKE ?`, [`${month}%`]);
+}
+
+export function deleteAllTransactions() {
+  if (Platform.OS === 'web') {
+    webStore.transactions = [];
+    webStore.nextTxId = 1;
+    return;
+  }
+  const db = getDb();
+  db.runSync(`DELETE FROM transactions`);
+}
+
+export function getAvailableMonths(): string[] {
+  if (Platform.OS === 'web') {
+    const months = new Set(webStore.transactions.map(t => t.date.slice(0, 7)));
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
+  }
+  const db = getDb();
+  const rows = db.getAllSync(`SELECT DISTINCT substr(date, 1, 7) as month FROM transactions ORDER BY month DESC`) as { month: string }[];
+  return rows.map(r => r.month);
+}
+
 export function bulkUpdateTransactionCategory(ids: number[], category: string) {
   if (ids.length === 0) return;
   if (Platform.OS === 'web') {

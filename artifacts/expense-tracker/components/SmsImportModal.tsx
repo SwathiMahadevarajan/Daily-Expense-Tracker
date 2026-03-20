@@ -15,7 +15,7 @@ import {
 import { Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { parseSmsMessage, processSmsChunk, ParsedSmsTransaction } from '../lib/smsParser';
-import { getImportedSmsIds, bulkInsertSmsTransactions, deleteTransactionBySmsId, recordImportedSmsIds } from '../lib/database';
+import { getImportedSmsIds, bulkInsertSmsTransactions, recordImportedSmsIds } from '../lib/database';
 import { readSms, getSmsAndroidModule } from '../lib/smsAndroid';
 import { useTheme } from '../lib/theme';
 
@@ -26,10 +26,7 @@ interface Props {
 }
 
 interface SmsResult extends ParsedSmsTransaction {
-  alreadyImported: boolean;
   selected: boolean;
-  deleted: boolean;
-  flaggedDuplicate: boolean;
 }
 
 type Stage = 'idle' | 'scanning' | 'review' | 'done';
@@ -115,7 +112,7 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
     }
 
     const importedIds = getImportedSmsIds();
-    const allParsed: SmsResult[] = [];
+    const newResults: SmsResult[] = [];
     let totalRead = 0;
     let totalBankSms = 0;
     const { minTs, maxTs } = getDateRangeFilter(dateRange);
@@ -133,7 +130,11 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
         const { parsed, bankSmsCount } = processSmsChunk(chunk, importedIds);
         totalRead += chunk.length;
         totalBankSms += bankSmsCount;
-        for (const p of parsed) allParsed.push({ ...p, selected: !p.alreadyImported, deleted: false, flaggedDuplicate: false });
+        for (const p of parsed) {
+          if (!p.alreadyImported) {
+            newResults.push({ ...p, selected: true });
+          }
+        }
         setSmsRead(totalRead);
         setBankSmsFound(totalBankSms);
         animateProgress(Math.min((totalRead / Math.max(filtered.length, 1)) * 100, 100));
@@ -145,54 +146,46 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
       setStage('idle'); return;
     }
 
-    setResults(allParsed);
+    setResults(newResults);
     setStage('review');
     animateProgress(100);
   };
 
   const toggleSelect = (index: number) => setResults(prev =>
-    prev.map((item, i) => i === index && !item.alreadyImported && !item.deleted && !item.flaggedDuplicate ? { ...item, selected: !item.selected } : item)
+    prev.map((item, i) => i === index ? { ...item, selected: !item.selected } : item)
   );
 
-  const toggleDuplicate = (index: number) => setResults(prev =>
-    prev.map((item, i) => i === index && !item.alreadyImported ? { ...item, flaggedDuplicate: !item.flaggedDuplicate, selected: false } : item)
-  );
-
-  const handleDeleteImported = (index: number, smsId: string) => {
-    Alert.alert('Remove Transaction', 'This will delete the previously imported transaction from your records. The SMS will be available to re-import.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: () => {
-        deleteTransactionBySmsId(smsId);
-        setResults(prev => prev.map((item, i) => i === index ? { ...item, alreadyImported: false, deleted: false, selected: true, flaggedDuplicate: false } : item));
-      }},
-    ]);
-  };
-
-  const selectAll = () => setResults(prev => prev.map(item => (!item.alreadyImported && !item.deleted && !item.flaggedDuplicate ? { ...item, selected: true } : item)));
-  const deselectAll = () => setResults(prev => prev.map(item => (!item.alreadyImported && !item.deleted ? { ...item, selected: false } : item)));
+  const selectAll = () => setResults(prev => prev.map(item => ({ ...item, selected: true })));
+  const deselectAll = () => setResults(prev => prev.map(item => ({ ...item, selected: false })));
 
   const handleImport = () => {
     const toImport = results
-      .filter(r => r.selected && !r.alreadyImported && !r.deleted && !r.flaggedDuplicate)
-      .map(r => ({ amount: r.amount, type: r.type, category: r.type === 'credit' ? 'Income' : 'Other', description: r.description, note: '', date: r.date, bank: r.bank, smsId: r.smsId }));
+      .filter(r => r.selected)
+      .map(r => ({
+        amount: r.amount,
+        type: r.type,
+        category: r.type === 'credit' ? 'Income' : 'Other',
+        description: r.description,
+        note: '',
+        date: r.date,
+        bank: r.bank,
+        smsId: r.smsId,
+        transfer_to: null,
+      }));
     const count = bulkInsertSmsTransactions(toImport);
-    const allShownIds = results.filter(r => !r.alreadyImported).map(r => r.smsId);
-    recordImportedSmsIds(allShownIds);
+    recordImportedSmsIds(results.map(r => r.smsId));
     setImportedCount(count);
     setStage('done');
     onImportComplete(count);
   };
 
-  const selectedCount = results.filter(r => r.selected && !r.alreadyImported && !r.deleted && !r.flaggedDuplicate).length;
-  const newCount = results.filter(r => !r.alreadyImported && !r.deleted && !r.flaggedDuplicate).length;
-  const alreadyCount = results.filter(r => r.alreadyImported && !r.deleted).length;
-  const duplicateCount = results.filter(r => r.flaggedDuplicate).length;
+  const selectedCount = results.filter(r => r.selected).length;
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
       <View style={[styles.container, { backgroundColor: colors.bg, paddingTop: STATUS_BAR_HEIGHT }]}>
         <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Import SMS Transactions</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Import Bank SMS</Text>
           <TouchableOpacity onPress={handleClose} style={styles.closeBtn}>
             <Feather name="x" size={24} color={colors.textSub} />
           </TouchableOpacity>
@@ -204,13 +197,13 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
               <View style={[styles.infoBox, { backgroundColor: colors.card }]}>
                 <Feather name="alert-circle" size={44} color={colors.warning} />
                 <Text style={[styles.infoTitle, { color: colors.text }]}>Android Only</Text>
-                <Text style={[styles.infoText, { color: colors.textMuted }]}>SMS Import is only available on Android devices. It reads your bank SMS messages to automatically create expense entries.</Text>
+                <Text style={[styles.infoText, { color: colors.textMuted }]}>SMS Import is only available on Android devices.</Text>
               </View>
             ) : isExpoGo() ? (
               <View style={[styles.infoBox, { backgroundColor: colors.card }]}>
                 <Feather name="info" size={44} color={colors.primary} />
                 <Text style={[styles.infoTitle, { color: colors.text }]}>APK Build Required</Text>
-                <Text style={[styles.infoText, { color: colors.textMuted }]}>SMS Import requires the full APK build. It is not available in Expo Go.</Text>
+                <Text style={[styles.infoText, { color: colors.textMuted }]}>SMS Import requires the full APK build — not available in Expo Go.</Text>
                 <View style={[styles.codeBox, { backgroundColor: colors.cardAlt }]}>
                   <Text style={[styles.codeText, { color: colors.textSub }]}>eas build --platform android --profile preview</Text>
                 </View>
@@ -220,25 +213,12 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
                 <View style={[styles.infoBox, { backgroundColor: colors.card }]}>
                   <Feather name="message-square" size={44} color={colors.primary} />
                   <Text style={[styles.infoTitle, { color: colors.text }]}>Import Bank SMS</Text>
-                  <Text style={[styles.infoText, { color: colors.textMuted }]}>Reads your bank SMS, filters real transactions, and shows only new ones for you to review.</Text>
-                  <View style={[styles.infoDetailBox, { backgroundColor: colors.cardAlt }]}>
-                    <View style={styles.infoRow}>
-                      <Feather name="filter" size={14} color={colors.primary} />
-                      <Text style={[styles.infoDetail, { color: colors.textMuted }]}>Mandate / autopay setup messages are excluded automatically</Text>
-                    </View>
-                    <View style={styles.infoRow}>
-                      <Feather name="copy" size={14} color={colors.warning} />
-                      <Text style={[styles.infoDetail, { color: colors.textMuted }]}>If you see a duplicate, tap the flag icon to skip it</Text>
-                    </View>
-                    <View style={styles.infoRow}>
-                      <Feather name="shield" size={14} color={colors.success} />
-                      <Text style={[styles.infoDetail, { color: colors.textMuted }]}>All data stays on your phone — nothing is uploaded</Text>
-                    </View>
-                  </View>
+                  <Text style={[styles.infoText, { color: colors.textMuted }]}>
+                    Scans your inbox, picks up bank transaction messages, and shows only new ones to import. Already-imported messages are automatically skipped.
+                  </Text>
                 </View>
-
                 <View style={styles.rangeSection}>
-                  <Text style={[styles.rangeLabel, { color: colors.textFaint }]}>Select date range to scan</Text>
+                  <Text style={[styles.rangeLabel, { color: colors.textFaint }]}>Date range to scan</Text>
                   <View style={styles.rangeChips}>
                     {DATE_RANGE_OPTIONS.map(opt => (
                       <TouchableOpacity
@@ -253,7 +233,6 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
                     ))}
                   </View>
                 </View>
-
                 <TouchableOpacity style={[styles.primaryBtn, { backgroundColor: colors.primary }]} onPress={startScan}>
                   <Feather name="download" size={18} color="#FFFFFF" />
                   <Text style={styles.primaryBtnText}>Scan SMS Messages</Text>
@@ -272,7 +251,7 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
             </View>
             <Text style={[styles.progressText, { color: colors.textMuted }]}>{Math.round(progress)}%</Text>
             <View style={styles.statsRow}>
-              {[{ val: smsRead, label: 'SMS Read' }, { val: bankSmsFound, label: 'Bank SMS' }, { val: results.length, label: 'Found' }].map(stat => (
+              {[{ val: smsRead, label: 'SMS Read' }, { val: bankSmsFound, label: 'Bank SMS' }, { val: results.length, label: 'New Found' }].map(stat => (
                 <View key={stat.label} style={[styles.statBox, { backgroundColor: colors.card }]}>
                   <Text style={[styles.statValue, { color: colors.primary }]}>{stat.val}</Text>
                   <Text style={[styles.statLabel, { color: colors.textFaint }]}>{stat.label}</Text>
@@ -286,116 +265,92 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
           <>
             <View style={[styles.reviewHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <Text style={[styles.reviewSummary, { color: colors.textSub }]}>
-                {results.length} found • {newCount} new • {alreadyCount} imported
-                {duplicateCount > 0 ? ` • ${duplicateCount} flagged` : ''}
+                {results.length === 0 ? 'No new transactions found' : `${results.length} new transactions found · ${selectedCount} selected`}
               </Text>
-              <View style={styles.selectActions}>
-                <TouchableOpacity onPress={selectAll} style={[styles.selectBtn, { backgroundColor: colors.primaryBg }]}>
-                  <Text style={[styles.selectBtnText, { color: colors.primary }]}>All</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={deselectAll} style={[styles.selectBtn, { backgroundColor: colors.primaryBg }]}>
-                  <Text style={[styles.selectBtnText, { color: colors.primary }]}>None</Text>
+              {results.length > 0 && (
+                <View style={styles.selectActions}>
+                  <TouchableOpacity onPress={selectAll} style={[styles.selectBtn, { backgroundColor: colors.primaryBg }]}>
+                    <Text style={[styles.selectBtnText, { color: colors.primary }]}>All</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={deselectAll} style={[styles.selectBtn, { backgroundColor: colors.primaryBg }]}>
+                    <Text style={[styles.selectBtnText, { color: colors.primary }]}>None</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+
+            {results.length === 0 ? (
+              <View style={styles.emptyReview}>
+                <Feather name="check-circle" size={48} color={colors.success} />
+                <Text style={[styles.emptyReviewTitle, { color: colors.text }]}>All caught up!</Text>
+                <Text style={[styles.emptyReviewText, { color: colors.textMuted }]}>No new transactions found in this date range. Already-imported ones are automatically skipped.</Text>
+                <TouchableOpacity style={[styles.doneBtn, { backgroundColor: colors.primary }]} onPress={handleClose}>
+                  <Text style={styles.doneBtnText}>Close</Text>
                 </TouchableOpacity>
               </View>
-            </View>
-
-            <ScrollView style={styles.resultsList}>
-              {results.length === 0 ? (
-                <View style={styles.emptyResults}>
-                  <Feather name="inbox" size={44} color={colors.textFaint} />
-                  <Text style={[styles.emptyResultsTitle, { color: colors.textSub }]}>No transactions found</Text>
-                  <Text style={[styles.emptyResultsText, { color: colors.textFaint }]}>No bank transactions were found in the selected date range. Try a wider range.</Text>
-                </View>
-              ) : (
-                results.map((item, index) => {
-                  const isSelected = item.selected && !item.alreadyImported && !item.flaggedDuplicate;
-                  return (
+            ) : (
+              <>
+                <ScrollView style={styles.resultsList}>
+                  {results.map((item, index) => (
                     <TouchableOpacity
                       key={item.smsId}
-                      style={[
-                        styles.resultItem,
-                        { backgroundColor: colors.card },
-                        item.alreadyImported && { opacity: 0.55, backgroundColor: colors.cardAlt },
-                        item.flaggedDuplicate && { opacity: 0.5, backgroundColor: colors.warningBg, borderColor: colors.warning },
-                        isSelected && { borderColor: colors.primary, backgroundColor: colors.primaryBg },
-                      ]}
+                      style={[styles.resultItem, { backgroundColor: colors.card }, item.selected && { borderColor: colors.primary, borderWidth: 1.5 }]}
                       onPress={() => toggleSelect(index)}
-                      disabled={item.alreadyImported}
                       activeOpacity={0.7}
                     >
-                      <View style={styles.resultCheckbox}>
-                        {item.alreadyImported ? (
-                          <View style={[styles.importedBadge, { backgroundColor: colors.successBg }]}>
-                            <Text style={[styles.importedBadgeText, { color: colors.successText }]}>Done</Text>
-                          </View>
-                        ) : item.flaggedDuplicate ? (
-                          <View style={[styles.dupBadge, { backgroundColor: colors.warningBg }]}>
-                            <Text style={[styles.dupBadgeText, { color: colors.warningText }]}>Skip</Text>
-                          </View>
-                        ) : (
-                          <View style={[styles.checkbox, { borderColor: colors.border }, item.selected && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
-                            {item.selected && <Feather name="check" size={11} color="#FFFFFF" />}
-                          </View>
-                        )}
+                      <View style={[styles.resultCheckbox, { borderColor: colors.border }, item.selected && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
+                        {item.selected && <Feather name="check" size={12} color="#FFFFFF" />}
                       </View>
-
-                      <View style={styles.resultContent}>
-                        <View style={styles.resultTopRow}>
-                          <Text style={[styles.resultAmount, { color: colors.text }]}>₹{item.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</Text>
-                          <View style={[styles.typeBadge, item.type === 'credit' ? { backgroundColor: colors.successBg } : { backgroundColor: colors.dangerBg }]}>
-                            <Text style={[styles.typeBadgeText, { color: item.type === 'credit' ? colors.successText : colors.dangerText }]}>
-                              {item.type === 'credit' ? '▲ CREDIT' : '▼ DEBIT'}
-                            </Text>
-                          </View>
-                        </View>
-                        <Text style={[styles.resultDesc, { color: colors.textSub }]} numberOfLines={1}>{item.description}</Text>
-                        <Text style={[styles.resultMeta, { color: colors.textFaint }]}>{item.bank} • {item.date}</Text>
+                      <View style={[styles.resultIcon, { backgroundColor: item.type === 'credit' ? colors.successBg : colors.dangerBg }]}>
+                        <Feather
+                          name={item.type === 'credit' ? 'arrow-down-left' : 'arrow-up-right'}
+                          size={14}
+                          color={item.type === 'credit' ? colors.success : colors.danger}
+                        />
                       </View>
-
-                      {item.alreadyImported ? (
-                        <TouchableOpacity style={[styles.deleteImportedBtn, { backgroundColor: colors.dangerBg }]} onPress={() => handleDeleteImported(index, item.smsId)}>
-                          <Feather name="trash-2" size={15} color={colors.danger} />
-                        </TouchableOpacity>
-                      ) : (
-                        <TouchableOpacity style={[styles.flagBtn, { backgroundColor: colors.cardAlt }, item.flaggedDuplicate && { backgroundColor: colors.warningBg }]} onPress={() => toggleDuplicate(index)}>
-                          <Feather name="copy" size={14} color={item.flaggedDuplicate ? colors.warning : colors.textFaint} />
-                        </TouchableOpacity>
-                      )}
+                      <View style={styles.resultInfo}>
+                        <Text style={[styles.resultDescription, { color: colors.text }]} numberOfLines={1}>{item.description}</Text>
+                        <Text style={[styles.resultMeta, { color: colors.textFaint }]}>{item.bank} · {item.date}</Text>
+                      </View>
+                      <Text style={[styles.resultAmount, { color: item.type === 'credit' ? colors.success : colors.danger }]}>
+                        {item.type === 'credit' ? '+' : '-'}₹{item.amount.toLocaleString('en-IN')}
+                      </Text>
                     </TouchableOpacity>
-                  );
-                })
-              )}
-              <View style={{ height: 16 }} />
-            </ScrollView>
+                  ))}
+                  <View style={{ height: 120 }} />
+                </ScrollView>
 
-            <View style={[styles.reviewFooter, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
-              {duplicateCount > 0 && (
-                <Text style={[styles.dupNote, { backgroundColor: colors.warningBg, color: colors.warningText }]}>
-                  {duplicateCount} transaction{duplicateCount !== 1 ? 's' : ''} flagged as duplicate will be skipped
-                </Text>
-              )}
-              <TouchableOpacity
-                style={[styles.primaryBtn, { backgroundColor: colors.primary }, selectedCount === 0 && { backgroundColor: colors.textFaint }]}
-                onPress={handleImport}
-                disabled={selectedCount === 0}
-              >
-                <Feather name="check-circle" size={18} color="#FFFFFF" />
-                <Text style={styles.primaryBtnText}>Import {selectedCount} Transaction{selectedCount !== 1 ? 's' : ''}</Text>
-              </TouchableOpacity>
-            </View>
+                <View style={[styles.importBar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+                  <TouchableOpacity
+                    style={[styles.importBtn, { backgroundColor: selectedCount === 0 ? colors.textFaint : colors.primary }]}
+                    onPress={handleImport}
+                    disabled={selectedCount === 0}
+                  >
+                    <Feather name="download" size={18} color="#FFFFFF" />
+                    <Text style={styles.importBtnText}>
+                      Import {selectedCount > 0 ? `${selectedCount} Transaction${selectedCount !== 1 ? 's' : ''}` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </>
         )}
 
         {stage === 'done' && (
           <View style={styles.doneContainer}>
-            <View style={[styles.doneIconWrap, { backgroundColor: colors.successBg }]}>
-              <Feather name="check-circle" size={64} color={colors.success} />
+            <View style={[styles.doneIcon, { backgroundColor: colors.successBg }]}>
+              <Feather name="check" size={40} color={colors.success} />
             </View>
-            <Text style={[styles.doneTitle, { color: colors.text }]}>Import Complete!</Text>
-            <Text style={[styles.doneText, { color: colors.textMuted }]}>Successfully imported {importedCount} transaction{importedCount !== 1 ? 's' : ''}.</Text>
-            <Text style={[styles.doneNote, { color: colors.textFaint }]}>Next time you scan, only new messages will appear — already-seen SMS are tracked automatically.</Text>
-            <TouchableOpacity style={[styles.primaryBtn, { backgroundColor: colors.primary }]} onPress={handleClose}>
-              <Text style={styles.primaryBtnText}>Done</Text>
+            <Text style={[styles.doneTitle, { color: colors.text }]}>Import Complete</Text>
+            <Text style={[styles.doneSubtitle, { color: colors.textMuted }]}>
+              {importedCount} transaction{importedCount !== 1 ? 's' : ''} added successfully.
+            </Text>
+            <Text style={[styles.doneHint, { color: colors.textFaint }]}>
+              Review and categorise them in the Home or All Transactions tab.
+            </Text>
+            <TouchableOpacity style={[styles.doneBtn, { backgroundColor: colors.primary }]} onPress={handleClose}>
+              <Text style={styles.doneBtnText}>Done</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -406,64 +361,55 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1 },
   headerTitle: { fontSize: 18, fontWeight: '700' },
   closeBtn: { padding: 4 },
   idleContainer: { flex: 1, padding: 20 },
-  infoBox: { alignItems: 'center', borderRadius: 20, padding: 20, width: '100%', marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
-  infoTitle: { fontSize: 20, fontWeight: '700', marginTop: 12, marginBottom: 8 },
-  infoText: { fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 12 },
-  infoDetailBox: { width: '100%', borderRadius: 12, padding: 12, gap: 8 },
-  infoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  infoDetail: { flex: 1, fontSize: 13, lineHeight: 18 },
-  codeBox: { borderRadius: 8, padding: 12, width: '100%' },
-  codeText: { fontFamily: 'monospace', fontSize: 13 },
-  rangeSection: { marginBottom: 16 },
+  infoBox: { borderRadius: 16, padding: 24, alignItems: 'center', marginBottom: 20 },
+  infoTitle: { fontSize: 20, fontWeight: '700', marginTop: 16, marginBottom: 10 },
+  infoText: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  codeBox: { borderRadius: 8, padding: 12, marginTop: 12, width: '100%' },
+  codeText: { fontSize: 13, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  rangeSection: { marginBottom: 20 },
   rangeLabel: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 10 },
   rangeChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   rangeChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5, borderColor: 'transparent' },
   rangeChipText: { fontSize: 13, fontWeight: '500' },
-  primaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 14, width: '100%' },
-  primaryBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
-  scanningContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  scanningTitle: { fontSize: 20, fontWeight: '700', marginTop: 16, marginBottom: 24 },
+  primaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderRadius: 14, paddingVertical: 16 },
+  primaryBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  scanningContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
+  scanningTitle: { fontSize: 18, fontWeight: '700', marginTop: 20, marginBottom: 24 },
   progressBarContainer: { width: '100%', height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: 8 },
   progressBar: { height: '100%', borderRadius: 4 },
-  progressText: { fontSize: 14, marginBottom: 24 },
-  statsRow: { flexDirection: 'row', gap: 16, width: '100%' },
-  statBox: { flex: 1, borderRadius: 14, padding: 16, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
-  statValue: { fontSize: 26, fontWeight: '700' },
-  statLabel: { fontSize: 12, marginTop: 4 },
-  reviewHeader: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  reviewSummary: { fontSize: 13, fontWeight: '500', flex: 1 },
+  progressText: { fontSize: 15, fontWeight: '600', marginBottom: 24 },
+  statsRow: { flexDirection: 'row', gap: 12 },
+  statBox: { flex: 1, borderRadius: 12, padding: 14, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
+  statValue: { fontSize: 22, fontWeight: '800' },
+  statLabel: { fontSize: 11, marginTop: 4 },
+  reviewHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1 },
+  reviewSummary: { fontSize: 14, fontWeight: '500', flex: 1 },
   selectActions: { flexDirection: 'row', gap: 8 },
-  selectBtn: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8 },
+  selectBtn: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20 },
   selectBtnText: { fontSize: 13, fontWeight: '600' },
   resultsList: { flex: 1 },
-  resultItem: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginTop: 8, borderRadius: 14, padding: 12, borderWidth: 1.5, borderColor: 'transparent', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
-  resultCheckbox: { marginRight: 10, width: 40, alignItems: 'center' },
-  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  importedBadge: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6 },
-  importedBadgeText: { fontSize: 10, fontWeight: '700' },
-  dupBadge: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6 },
-  dupBadgeText: { fontSize: 10, fontWeight: '700' },
-  resultContent: { flex: 1 },
-  resultTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 },
-  resultAmount: { fontSize: 16, fontWeight: '700' },
-  typeBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
-  typeBadgeText: { fontSize: 10, fontWeight: '700' },
-  resultDesc: { fontSize: 13, marginBottom: 2 },
-  resultMeta: { fontSize: 12 },
-  deleteImportedBtn: { padding: 8, marginLeft: 4, borderRadius: 8 },
-  flagBtn: { padding: 8, marginLeft: 4, borderRadius: 8 },
-  reviewFooter: { padding: 16, borderTopWidth: 1, gap: 8 },
-  dupNote: { fontSize: 12, textAlign: 'center', padding: 8, borderRadius: 8 },
-  emptyResults: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 32 },
-  emptyResultsTitle: { fontSize: 17, fontWeight: '600', marginTop: 16, marginBottom: 8 },
-  emptyResultsText: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
-  doneContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32, gap: 12 },
-  doneIconWrap: { width: 110, height: 110, borderRadius: 55, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  doneTitle: { fontSize: 26, fontWeight: '800' },
-  doneText: { fontSize: 16, textAlign: 'center' },
-  doneNote: { fontSize: 13, textAlign: 'center', lineHeight: 19, marginBottom: 16 },
+  resultItem: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginTop: 8, borderRadius: 14, padding: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1, borderWidth: 1.5, borderColor: 'transparent' },
+  resultCheckbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  resultIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  resultInfo: { flex: 1 },
+  resultDescription: { fontSize: 14, fontWeight: '600' },
+  resultMeta: { fontSize: 12, marginTop: 2 },
+  resultAmount: { fontSize: 14, fontWeight: '700' },
+  importBar: { borderTopWidth: 1, padding: 16 },
+  importBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 14, paddingVertical: 15 },
+  importBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  emptyReview: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
+  emptyReviewTitle: { fontSize: 22, fontWeight: '700', marginTop: 20, marginBottom: 10 },
+  emptyReviewText: { fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 30 },
+  doneContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 },
+  doneIcon: { width: 80, height: 80, borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+  doneTitle: { fontSize: 24, fontWeight: '800', marginBottom: 10 },
+  doneSubtitle: { fontSize: 16, textAlign: 'center', marginBottom: 8 },
+  doneHint: { fontSize: 14, textAlign: 'center', marginBottom: 32 },
+  doneBtn: { borderRadius: 14, paddingHorizontal: 40, paddingVertical: 14 },
+  doneBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
 });

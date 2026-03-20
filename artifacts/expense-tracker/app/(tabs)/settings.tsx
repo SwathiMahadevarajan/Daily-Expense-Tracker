@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { Category, getCategories, addCategory, updateCategory, deleteCategory, createBackup, restoreBackup, BackupData } from '../../lib/database';
+import { Category, getCategories, addCategory, updateCategory, deleteCategory, createBackup, restoreBackup, BackupData, deleteTransactionsByMonth, deleteAllTransactions, getAvailableMonths } from '../../lib/database';
 import { getPaymentSources, addPaymentSource, removePaymentSource } from '../../lib/paymentSources';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import CategoryForm from '../../components/CategoryForm';
