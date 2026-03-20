@@ -19,7 +19,7 @@ import { Category, getCategories, addCategory, updateCategory, deleteCategory, c
 import { getPaymentSources, addPaymentSource, removePaymentSource } from '../../lib/paymentSources';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import CategoryForm from '../../components/CategoryForm';
-import { useTheme } from '../../lib/theme';
+import { useTheme, setThemeMode, ThemeMode } from '../../lib/theme';
 
 const REMINDER_KEY = 'evening_reminder';
 const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0;
@@ -36,10 +36,15 @@ const EVENING_HOURS = [
   { label: '10:00 PM', hour: '22', minute: '00' },
 ];
 
+function getOpeningBalanceKey(source: string) {
+  return `source_ob_${source}`;
+}
+
 export default function SettingsScreen() {
-  const { colors, dark } = useTheme();
+  const { colors, dark, themeMode } = useTheme();
   const [categories, setCategories] = useState<Category[]>([]);
   const [paymentSources, setPaymentSources] = useState<string[]>([]);
+  const [openingBalances, setOpeningBalances] = useState<Record<string, string>>({});
   const [reminderEnabled, setReminderEnabled] = useState(false);
   const [reminderHour, setReminderHour] = useState('20');
   const [reminderMinute, setReminderMinute] = useState('00');
@@ -53,7 +58,16 @@ export default function SettingsScreen() {
 
   const loadData = useCallback(async () => {
     try { setCategories(getCategories()); } catch {}
-    try { setPaymentSources(await getPaymentSources()); } catch {}
+    try {
+      const sources = await getPaymentSources();
+      setPaymentSources(sources);
+      const bals: Record<string, string> = {};
+      for (const s of sources) {
+        const val = await AsyncStorage.getItem(getOpeningBalanceKey(s));
+        bals[s] = val ?? '';
+      }
+      setOpeningBalances(bals);
+    } catch {}
     try {
       const rem = await AsyncStorage.getItem(REMINDER_KEY);
       if (rem) {
@@ -98,8 +112,7 @@ export default function SettingsScreen() {
     if (reminderEnabled) await saveReminder(true, hour, minute);
   };
 
-  const selectedTimeLabel = EVENING_HOURS.find(t => t.hour === reminderHour && t.minute === reminderMinute)?.label
-    ?? `${reminderHour}:${reminderMinute}`;
+  const selectedTimeLabel = EVENING_HOURS.find(t => t.hour === reminderHour && t.minute === reminderMinute)?.label ?? `${reminderHour}:${reminderMinute}`;
 
   const handleBackup = async () => {
     setBackingUp(true);
@@ -184,17 +197,142 @@ export default function SettingsScreen() {
     const updated = await addPaymentSource(newSource.trim());
     setPaymentSources(updated);
     setNewSource('');
+    const bals = { ...openingBalances };
+    bals[newSource.trim()] = '';
+    setOpeningBalances(bals);
   };
 
   const handleRemoveSource = async (source: string) => {
     Alert.alert('Remove Source', `Remove "${source}"?`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: async () => setPaymentSources(await removePaymentSource(source)) },
+      { text: 'Remove', style: 'destructive', onPress: async () => {
+        const updated = await removePaymentSource(source);
+        setPaymentSources(updated);
+        await AsyncStorage.removeItem(getOpeningBalanceKey(source));
+        const bals = { ...openingBalances };
+        delete bals[source];
+        setOpeningBalances(bals);
+      }},
     ]);
   };
 
+  const handleSaveOpeningBalance = async (source: string) => {
+    const val = openingBalances[source] ?? '';
+    const num = parseFloat(val);
+    if (val !== '' && (isNaN(num) || num < 0)) {
+      Alert.alert('Invalid Amount', 'Please enter a valid non-negative amount or leave blank for zero.');
+      return;
+    }
+    await AsyncStorage.setItem(getOpeningBalanceKey(source), val === '' ? '0' : val);
+    Alert.alert('Saved', `Opening balance for ${source} set to ₹${val === '' ? '0' : num.toFixed(2)}`);
+  };
+
+  const THEME_OPTIONS: { mode: ThemeMode; label: string; icon: string }[] = [
+    { mode: 'light', label: 'Light', icon: 'sun' },
+    { mode: 'dark', label: 'Dark', icon: 'moon' },
+    { mode: 'system', label: 'System', icon: 'smartphone' },
+  ];
+
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.bg }]} showsVerticalScrollIndicator={false}>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Appearance</Text>
+        <View style={[styles.card, { backgroundColor: colors.card }]}>
+          <Text style={[styles.cardLabel, { color: colors.text }]}>Theme</Text>
+          <Text style={[styles.cardSub, { color: colors.textMuted }]}>Choose how the app looks</Text>
+          <View style={styles.themeRow}>
+            {THEME_OPTIONS.map(opt => (
+              <TouchableOpacity
+                key={opt.mode}
+                style={[
+                  styles.themeBtn,
+                  { backgroundColor: colors.cardAlt, borderColor: colors.border },
+                  themeMode === opt.mode && { backgroundColor: colors.primaryBg, borderColor: colors.primary },
+                ]}
+                onPress={() => setThemeMode(opt.mode)}
+              >
+                <Feather name={opt.icon as any} size={18} color={themeMode === opt.mode ? colors.primary : colors.textMuted} />
+                <Text style={[styles.themeBtnText, { color: themeMode === opt.mode ? colors.primary : colors.textSub }]}>
+                  {opt.label}
+                </Text>
+                {themeMode === opt.mode && (
+                  <View style={[styles.themeCheck, { backgroundColor: colors.primary }]}>
+                    <Feather name="check" size={10} color="#FFFFFF" />
+                  </View>
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Payment Sources</Text>
+        <View style={[styles.card, { backgroundColor: colors.card }]}>
+          {paymentSources.length === 0 ? (
+            <Text style={[styles.emptyText, { color: colors.textFaint }]}>No payment sources yet. Add one below.</Text>
+          ) : (
+            paymentSources.map(source => (
+              <View key={source} style={[styles.sourceItem, { borderBottomColor: colors.divider }]}>
+                <View style={[styles.sourceIcon, { backgroundColor: colors.primaryBg }]}>
+                  <Feather name="credit-card" size={14} color={colors.primary} />
+                </View>
+                <Text style={[styles.sourceName, { color: colors.text }]}>{source}</Text>
+                <TouchableOpacity style={[styles.removeBtn, { backgroundColor: colors.dangerBg }]} onPress={() => handleRemoveSource(source)}>
+                  <Feather name="trash-2" size={14} color={colors.danger} />
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
+          <View style={styles.addSourceRow}>
+            <TextInput
+              style={[styles.sourceInput, { backgroundColor: colors.inputBg, color: colors.inputText }]}
+              value={newSource}
+              onChangeText={setNewSource}
+              placeholder="Add source (e.g. SBI, Cash, UPI)"
+              placeholderTextColor={colors.placeholder}
+              onSubmitEditing={handleAddSource}
+            />
+            <TouchableOpacity style={[styles.addSourceBtn, { backgroundColor: colors.primary }]} onPress={handleAddSource}>
+              <Feather name="plus" size={18} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
+      {paymentSources.length > 0 && (
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Opening Balances</Text>
+          <View style={[styles.card, { backgroundColor: colors.card }]}>
+            <Text style={[styles.cardSub, { color: colors.textMuted }]}>
+              Set the balance each account had before you started tracking. Used to calculate current account balances in Analytics.
+            </Text>
+            {paymentSources.map(source => (
+              <View key={source} style={[styles.obRow, { borderBottomColor: colors.divider }]}>
+                <View style={[styles.obIcon, { backgroundColor: colors.primaryBg }]}>
+                  <Feather name="credit-card" size={14} color={colors.primary} />
+                </View>
+                <Text style={[styles.obSource, { color: colors.text }]}>{source}</Text>
+                <View style={[styles.obInputWrap, { backgroundColor: colors.inputBg }]}>
+                  <Text style={[styles.obRupee, { color: colors.textFaint }]}>₹</Text>
+                  <TextInput
+                    style={[styles.obInput, { color: colors.inputText }]}
+                    value={openingBalances[source] ?? ''}
+                    onChangeText={val => setOpeningBalances(prev => ({ ...prev, [source]: val }))}
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    placeholderTextColor={colors.placeholder}
+                  />
+                </View>
+                <TouchableOpacity style={[styles.obSaveBtn, { backgroundColor: colors.primaryBg }]} onPress={() => handleSaveOpeningBalance(source)}>
+                  <Feather name="check" size={16} color={colors.primary} />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Data Backup & Restore</Text>
@@ -248,51 +386,17 @@ export default function SettingsScreen() {
                   const sel = reminderHour === opt.hour && reminderMinute === opt.minute;
                   return (
                     <TouchableOpacity
-                      key={opt.label}
-                      style={[styles.timeChip, { backgroundColor: colors.cardAlt, borderColor: 'transparent' }, sel && { backgroundColor: colors.primaryBg, borderColor: colors.primary }]}
+                      key={`${opt.hour}:${opt.minute}`}
+                      style={[styles.timeChip, { backgroundColor: sel ? colors.primary : colors.cardAlt }]}
                       onPress={() => handleSelectTime(opt.hour, opt.minute)}
                     >
-                      <Text style={[styles.timeChipText, { color: sel ? colors.primary : colors.textSub }, sel && { fontWeight: '700' }]}>
-                        {opt.label}
-                      </Text>
+                      <Text style={[styles.timeChipText, { color: sel ? '#FFFFFF' : colors.textSub }]}>{opt.label}</Text>
                     </TouchableOpacity>
                   );
                 })}
               </View>
-              {Platform.OS === 'web' && (
-                <Text style={[styles.notAvailableText, { color: colors.textFaint }]}>Push notifications require the Android APK build.</Text>
-              )}
             </>
           )}
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Payment Sources</Text>
-        <View style={[styles.card, { backgroundColor: colors.card }]}>
-          <View style={styles.addRow}>
-            <TextInput
-              style={[styles.addInput, { backgroundColor: colors.inputBg, color: colors.inputText }]}
-              value={newSource}
-              onChangeText={setNewSource}
-              placeholder="e.g. HDFC Card, Paytm..."
-              placeholderTextColor={colors.placeholder}
-              onSubmitEditing={handleAddSource}
-            />
-            <TouchableOpacity style={[styles.addBtn, { backgroundColor: colors.primary }]} onPress={handleAddSource}>
-              <Feather name="plus" size={20} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
-          <View style={styles.chipWrap}>
-            {paymentSources.map(source => (
-              <View key={source} style={[styles.sourceChip, { backgroundColor: colors.cardAlt }]}>
-                <Text style={[styles.sourceChipText, { color: colors.textSub }]}>{source}</Text>
-                <TouchableOpacity onPress={() => handleRemoveSource(source)} style={{ padding: 2 }}>
-                  <Feather name="x" size={13} color={colors.textMuted} />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
         </View>
       </View>
 
@@ -300,116 +404,88 @@ export default function SettingsScreen() {
         <View style={styles.sectionTitleRow}>
           <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Categories</Text>
           <TouchableOpacity
-            style={[styles.addCatBtn, { backgroundColor: colors.primaryBg }]}
-            onPress={() => { setShowNewCatForm(true); setEditingCat(null); }}
+            style={[styles.sectionAddBtn, { backgroundColor: colors.primaryBg }]}
+            onPress={() => { setShowNewCatForm(!showNewCatForm); setEditingCat(null); }}
           >
-            <Feather name="plus" size={14} color={colors.primary} />
-            <Text style={[styles.addCatBtnText, { color: colors.primary }]}>New</Text>
+            <Feather name={showNewCatForm ? 'x' : 'plus'} size={14} color={colors.primary} />
+            <Text style={[styles.sectionAddText, { color: colors.primary }]}>{showNewCatForm ? 'Cancel' : 'Add'}</Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={[styles.catHint, { color: colors.textFaint }]}>Tap the edit icon to customise any category, including built-in ones.</Text>
-
         {showNewCatForm && (
           <View style={[styles.card, { backgroundColor: colors.card }]}>
-            <Text style={[styles.cardSubTitle, { color: colors.textSub }]}>New Category</Text>
-            <CategoryForm onSave={handleAddCategory} onCancel={() => setShowNewCatForm(false)} saveLabel="Add Category" />
+            <Text style={[styles.formHeading, { color: colors.text }]}>New Category</Text>
+            <CategoryForm onSave={handleAddCategory} onCancel={() => setShowNewCatForm(false)} saveLabel="Create Category" />
           </View>
         )}
 
-        {categories.map(cat => {
-          const isBuiltIn = !!cat.isDefault;
-          return editingCat?.id === cat.id ? (
-            <View key={cat.id} style={[styles.card, { backgroundColor: colors.card, marginBottom: 8 }]}>
-              <View style={styles.editingCatHeader}>
-                <Text style={[styles.cardSubTitle, { color: colors.textSub }]}>Edit: {editingCat.name}</Text>
-                {isBuiltIn && (
-                  <View style={[styles.defaultBadgeSmall, { backgroundColor: colors.warningBg }]}>
-                    <Text style={[styles.defaultBadgeSmallText, { color: colors.warningText }]}>Built-in</Text>
+        <View style={[styles.card, { backgroundColor: colors.card }]}>
+          {categories.map(cat => (
+            <View key={cat.id}>
+              {editingCat?.id === cat.id ? (
+                <View style={[styles.catEditBox, { backgroundColor: colors.cardAlt, borderColor: colors.primaryBorder }]}>
+                  <CategoryForm
+                    initialName={cat.name}
+                    initialIcon={cat.icon}
+                    initialColor={cat.color}
+                    onSave={handleEditCategory}
+                    onCancel={() => setEditingCat(null)}
+                    saveLabel="Save Changes"
+                  />
+                </View>
+              ) : (
+                <View style={[styles.catRow, { borderBottomColor: colors.divider }]}>
+                  <View style={[styles.catIcon, { backgroundColor: (cat.color || '#6B7280') + '22' }]}>
+                    <Feather name={(cat.icon || 'more-horizontal') as any} size={16} color={cat.color || '#6B7280'} />
                   </View>
-                )}
-              </View>
-              <CategoryForm
-                initialName={cat.name}
-                initialIcon={cat.icon}
-                initialColor={cat.color}
-                onSave={handleEditCategory}
-                onCancel={() => setEditingCat(null)}
-                saveLabel="Update"
-              />
-            </View>
-          ) : (
-            <View key={cat.id} style={[styles.catItem, { backgroundColor: colors.card }]}>
-              <View style={[styles.catIconBox, { backgroundColor: (cat.color || '#6B7280') + '22' }]}>
-                <Feather name={(cat.icon || 'more-horizontal') as any} size={18} color={cat.color || '#6B7280'} />
-              </View>
-              <Text style={[styles.catName, { color: colors.text }]}>{cat.name}</Text>
-              {isBuiltIn && (
-                <View style={[styles.defaultBadge, { backgroundColor: colors.cardAlt }]}>
-                  <Text style={[styles.defaultBadgeText, { color: colors.textFaint }]}>Built-in</Text>
+                  <Text style={[styles.catName, { color: colors.text }]}>{cat.name}</Text>
+                  {!!cat.isDefault && (
+                    <View style={[styles.builtInBadge, { backgroundColor: colors.cardAlt }]}>
+                      <Text style={[styles.builtInBadgeText, { color: colors.textFaint }]}>built-in</Text>
+                    </View>
+                  )}
+                  <View style={styles.catActions}>
+                    <TouchableOpacity style={[styles.catActionBtn, { backgroundColor: colors.primaryBg }]} onPress={() => { setEditingCat(cat); setShowNewCatForm(false); }}>
+                      <Feather name="edit-2" size={14} color={colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.catActionBtn, { backgroundColor: colors.dangerBg }]} onPress={() => handleDeleteCategory(cat)}>
+                      <Feather name="trash-2" size={14} color={colors.danger} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
-              <View style={styles.catActions}>
-                <TouchableOpacity
-                  onPress={() => { setEditingCat(cat); setShowNewCatForm(false); }}
-                  style={[styles.catActionBtn, { backgroundColor: colors.primaryBg }]}
-                >
-                  <Feather name="edit-2" size={15} color={colors.primary} />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => handleDeleteCategory(cat)}
-                  style={[styles.catActionBtn, { backgroundColor: colors.dangerBg }]}
-                >
-                  <Feather name="trash-2" size={15} color={colors.danger} />
-                </TouchableOpacity>
-              </View>
             </View>
-          );
-        })}
+          ))}
+        </View>
       </View>
 
-      <View style={{ height: 40 }} />
+      <View style={{ height: 60 }} />
 
-      <Modal
-        visible={showRestoreModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowRestoreModal(false)}
-      >
-        <View style={[styles.modalContainer, { backgroundColor: colors.bg, paddingTop: STATUS_BAR_HEIGHT }]}>
-          <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Restore Backup</Text>
-            <TouchableOpacity onPress={() => setShowRestoreModal(false)} style={styles.modalClose}>
-              <Feather name="x" size={22} color={colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
-            <Text style={[styles.modalInstr, { backgroundColor: colors.primaryBg, color: colors.textSub }]}>
-              1. Open your saved backup file{'\n'}
-              2. Copy all the text{'\n'}
-              3. Paste it below{'\n'}
-              4. Tap Restore — duplicates are skipped automatically
-            </Text>
+      <Modal visible={showRestoreModal} animationType="slide" transparent onRequestClose={() => setShowRestoreModal(false)}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowRestoreModal(false)}>
+          <View style={[styles.bottomSheet, { backgroundColor: colors.card }]} onStartShouldSetResponder={() => true}>
+            <View style={[styles.bottomSheetHandle, { backgroundColor: colors.border }]} />
+            <Text style={[styles.bottomSheetTitle, { color: colors.text }]}>Restore from Backup</Text>
+            <Text style={[styles.bottomSheetSub, { color: colors.textMuted }]}>Paste your backup JSON below. Existing transactions are kept — duplicates are skipped.</Text>
             <TextInput
-              style={[styles.jsonInput, { backgroundColor: colors.card, color: colors.inputText, borderColor: colors.border }]}
+              style={[styles.jsonInput, { backgroundColor: colors.inputBg, color: colors.inputText, borderColor: colors.border }]}
               value={restoreJson}
               onChangeText={setRestoreJson}
-              placeholder={'Paste backup JSON here...\n{"version":1,"transactions":[...]}'}
+              placeholder='Paste backup JSON here...'
               placeholderTextColor={colors.placeholder}
               multiline
-              autoCapitalize="none"
-              autoCorrect={false}
+              textAlignVertical="top"
             />
-            <TouchableOpacity
-              style={[styles.restoreConfirmBtn, { backgroundColor: colors.success }, restoring && { opacity: 0.6 }]}
-              onPress={confirmRestore}
-              disabled={restoring}
-            >
-              <Feather name="check-circle" size={18} color="#FFFFFF" />
-              <Text style={styles.restoreConfirmText}>{restoring ? 'Restoring...' : 'Restore'}</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </View>
+            <View style={styles.bottomSheetBtns}>
+              <TouchableOpacity style={[styles.bottomSheetBtn, { backgroundColor: colors.cardAlt }]} onPress={() => setShowRestoreModal(false)}>
+                <Text style={[styles.bottomSheetBtnText, { color: colors.textSub }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.bottomSheetBtn, { backgroundColor: colors.primary }]} onPress={confirmRestore} disabled={restoring}>
+                <Text style={[styles.bottomSheetBtnText, { color: '#FFFFFF' }]}>{restoring ? 'Restoring...' : 'Restore'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
       </Modal>
     </ScrollView>
   );
@@ -417,55 +493,66 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  section: { marginTop: 20, paddingHorizontal: 16 },
-  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 10 },
-  catHint: { fontSize: 12, marginBottom: 10, fontStyle: 'italic' },
-  addCatBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
-  addCatBtnText: { fontSize: 13, fontWeight: '600' },
-  card: { borderRadius: 16, padding: 16, marginBottom: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
-  cardSubTitle: { fontSize: 14, fontWeight: '700', marginBottom: 12 },
-  editingCatHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 8 },
-  backupRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14, gap: 12 },
-  backupIconWrap: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  section: { marginBottom: 8 },
+  sectionTitle: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 16, paddingTop: 16, paddingBottom: 8 },
+  sectionAddBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8 },
+  sectionAddText: { fontSize: 13, fontWeight: '600' },
+  card: { marginHorizontal: 12, borderRadius: 14, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
+  cardLabel: { fontSize: 15, fontWeight: '600', marginBottom: 4 },
+  cardSub: { fontSize: 13, marginBottom: 14, lineHeight: 18 },
+  themeRow: { flexDirection: 'row', gap: 8 },
+  themeBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderRadius: 12, gap: 6, borderWidth: 1.5, position: 'relative' },
+  themeBtnText: { fontSize: 13, fontWeight: '600' },
+  themeCheck: { position: 'absolute', top: 6, right: 6, width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  sourceItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, gap: 10 },
+  sourceIcon: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  sourceName: { flex: 1, fontSize: 15, fontWeight: '500' },
+  removeBtn: { padding: 8, borderRadius: 8 },
+  addSourceRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  sourceInput: { flex: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15 },
+  addSourceBtn: { width: 44, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  obRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, gap: 10 },
+  obIcon: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  obSource: { flex: 1, fontSize: 14, fontWeight: '500' },
+  obInputWrap: { flexDirection: 'row', alignItems: 'center', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, gap: 4 },
+  obRupee: { fontSize: 14, fontWeight: '600' },
+  obInput: { fontSize: 14, fontWeight: '600', minWidth: 60, maxWidth: 90 },
+  obSaveBtn: { padding: 8, borderRadius: 8 },
+  backupRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 14 },
+  backupIconWrap: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   backupInfo: { flex: 1 },
-  backupTitle: { fontSize: 15, fontWeight: '700', marginBottom: 3 },
+  backupTitle: { fontSize: 15, fontWeight: '600', marginBottom: 4 },
   backupSub: { fontSize: 13, lineHeight: 18 },
-  backupBtns: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  backupBtns: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   backupBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 10, paddingVertical: 10, borderWidth: 1 },
   backupBtnText: { fontSize: 14, fontWeight: '600' },
-  backupNote: { fontSize: 12, lineHeight: 17 },
-  reminderToggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  backupNote: { fontSize: 12, lineHeight: 18 },
+  reminderToggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   reminderLabel: { fontSize: 15, fontWeight: '600' },
   reminderSub: { fontSize: 13, marginTop: 2 },
   timeDivider: { height: 1, marginVertical: 14 },
-  timePickerLabel: { fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
+  timePickerLabel: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 10 },
   timeChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  timeChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5 },
-  timeChipText: { fontSize: 14, fontWeight: '500' },
-  notAvailableText: { fontSize: 12, marginTop: 10, fontStyle: 'italic', textAlign: 'center' },
-  addRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  addInput: { flex: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15 },
-  addBtn: { borderRadius: 8, width: 42, alignItems: 'center', justifyContent: 'center' },
-  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  sourceChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
-  sourceChipText: { fontSize: 13, fontWeight: '500' },
-  catItem: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, padding: 12, marginBottom: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
-  catIconBox: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  catName: { flex: 1, fontSize: 15, fontWeight: '600' },
-  defaultBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, marginRight: 4 },
-  defaultBadgeText: { fontSize: 11, fontWeight: '500' },
-  defaultBadgeSmall: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  defaultBadgeSmallText: { fontSize: 11, fontWeight: '600' },
-  catActions: { flexDirection: 'row', gap: 4 },
-  catActionBtn: { padding: 8, borderRadius: 8 },
-  modalContainer: { flex: 1 },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1 },
-  modalTitle: { fontSize: 18, fontWeight: '700' },
-  modalClose: { padding: 4 },
-  modalBody: { flex: 1, padding: 20 },
-  modalInstr: { fontSize: 14, lineHeight: 22, marginBottom: 16, padding: 14, borderRadius: 12 },
-  jsonInput: { borderRadius: 12, padding: 14, fontSize: 13, minHeight: 200, textAlignVertical: 'top', fontFamily: 'monospace', borderWidth: 1, marginBottom: 16 },
-  restoreConfirmBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 12, paddingVertical: 14 },
-  restoreConfirmText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+  timeChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20 },
+  timeChipText: { fontSize: 13, fontWeight: '500' },
+  formHeading: { fontSize: 15, fontWeight: '700', marginBottom: 14 },
+  catEditBox: { borderRadius: 12, padding: 12, marginVertical: 6, borderWidth: 1 },
+  catRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, gap: 10 },
+  catIcon: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  catName: { flex: 1, fontSize: 14, fontWeight: '500' },
+  builtInBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+  builtInBadgeText: { fontSize: 10, fontWeight: '600' },
+  catActions: { flexDirection: 'row', gap: 6 },
+  catActionBtn: { padding: 7, borderRadius: 8 },
+  emptyText: { fontSize: 14, textAlign: 'center', paddingVertical: 12 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  bottomSheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40 },
+  bottomSheetHandle: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
+  bottomSheetTitle: { fontSize: 18, fontWeight: '700', marginBottom: 6 },
+  bottomSheetSub: { fontSize: 14, marginBottom: 14, lineHeight: 20 },
+  jsonInput: { borderRadius: 12, borderWidth: 1, padding: 12, fontSize: 13, minHeight: 160, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', marginBottom: 16 },
+  bottomSheetBtns: { flexDirection: 'row', gap: 10 },
+  bottomSheetBtn: { flex: 1, padding: 14, borderRadius: 12, alignItems: 'center' },
+  bottomSheetBtnText: { fontSize: 15, fontWeight: '700' },
 });

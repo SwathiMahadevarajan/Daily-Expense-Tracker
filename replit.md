@@ -42,18 +42,20 @@ artifacts/expense-tracker/
 
 ## Key Features
 
-### Dark Mode
-- Full dark/light mode support via `lib/theme.ts` using `useColorScheme()`
+### Theme Switcher
+- Manual Light / Dark / System (follows device) toggle in Settings → Appearance
+- Module-level store in `lib/theme.ts` with listener Set; no React Context needed
+- Persisted to AsyncStorage (`theme_preference`); loaded on app start
 - All screens and modals use `useTheme()` hook; no hardcoded colors anywhere
-- Dark palette: bg `#0F172A`, card `#1E293B`, primary `#818CF8`
+- Exports: `useTheme()`, `setThemeMode()`, `getThemeMode()`, `ThemeMode`
 
 ### Home Screen
 - Month navigator with slide animation
 - Spent/Received/Net summary card
 - Summary chips: Daily Avg, Transaction Count, vs-last-month %
-- Transaction list grouped by date (tap to edit, long-press to delete)
-- Floating "+ Add" button, "Import SMS" button
-- **Bulk operations**: Select mode with select-all/none, bulk category update, bulk payment source update, bulk delete
+- Transaction list grouped by date; tap to edit, long-press (350ms) to enter bulk mode
+- Bulk bar: two-row layout — top row (count + All/None + X cancel), bottom row (horizontal ScrollView with pill chips: Category, Source, Delete)
+- Floating "+ Add" button, "Import SMS" button; FAB hides while in bulk mode
 
 ### SMS Import (Android native build only)
 - User-triggered (tap button), not automatic
@@ -69,29 +71,40 @@ artifacts/expense-tracker/
 
 ### Analytics Screen
 - Month/year navigator with Overview / Trends / Insights tabs
-- **Salary Carry-forward toggle**: include previous month's received income in current month's totals (persisted per-month in AsyncStorage)
-- KPI cards: Total Spent, Total Received (effective), Net, Savings Rate, Daily Avg
+- KPI cards: Total Spent, Total Received, Net, Savings Rate, Daily Avg
+- **Source Balances card**: per-account current balance = opening balance + credits − debits ± transfers (all-time); replaces carry-forward
 - Monthly Budget: set, track, projected spend alert
 - Spending by category ranked bar chart
 - Top 5 expenses + top income sources
 - 6-month trend chart, weekly breakdown, income vs expense comparison
 - Day-of-week spending heatmap, source stats (SMS vs manual), efficiency metrics
+- All analytics queries exclude transfer transactions (`WHERE transfer_to IS NULL`)
 
 ### All Transactions Screen
-- Full transaction list with search and category filter
-- **Bulk operations**: same bulk select/edit/delete as Home tab
+- Full transaction list with search and type filter (All/Debit/Credit)
+- Long-press (350ms) to enter bulk mode; same two-row scrollable chip bar as Home
+- Transfer transactions shown with repeat icon and "From → To" meta text
 
 ### Settings Screen
+- **Theme toggle**: Light / Dark / System options at top of screen
+- **Opening Balances**: per-source input fields; stored as `source_ob_${sourceName}` in AsyncStorage
 - Evening reminder toggle + time (local notifications)
 - Payment sources CRUD (stored in AsyncStorage)
 - Categories CRUD with icon picker + color picker
-- **Crash fix**: `isDefault` (SQLite integer) now cast with `!!` to prevent RN `{0 && <View/>}` crash
 - Built-in categories can now be edited/deleted (confirmation dialog shown)
+
+### Transfer Transactions
+- Added via AddTransactionModal with Debit / Credit / Transfer three-button toggle
+- Transfer: stored as `type='debit'` with `transfer_to` field set to destination source
+- Shown in Home and All Transactions with repeat icon and "From → To" format
+- Transfer category "Transfer" added to DEFAULT_CATEGORIES (icon: repeat, color: grey)
+- Excluded from all analytics spend/income totals
+- Source balance formula: `opening_balance + credits − debits + transferIn − transferOut`
 
 ## Database Schema
 
 **transactions table:**
-- id, amount, type (debit/credit), category, description, note, date, bank, smsId (UNIQUE)
+- id, amount, type (debit/credit), category, description, note, date, bank, smsId (UNIQUE), transfer_to
 
 **categories table:**
 - id, name, icon (Feather), color (hex), isDefault

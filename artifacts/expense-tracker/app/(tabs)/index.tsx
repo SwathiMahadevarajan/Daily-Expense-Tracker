@@ -122,8 +122,13 @@ export default function HomeScreen() {
     );
   };
 
-  const toggleBulkMode = () => {
-    setBulkMode(prev => !prev);
+  const enterBulkMode = (id: number) => {
+    setBulkMode(true);
+    setSelectedIds(new Set([id]));
+  };
+
+  const exitBulkMode = () => {
+    setBulkMode(false);
     setSelectedIds(new Set());
   };
 
@@ -198,6 +203,46 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
+      {bulkMode && (
+        <View style={[styles.bulkBar, { backgroundColor: colors.primaryBg, borderBottomColor: colors.primaryBorder }]}>
+          <View style={styles.bulkBarTop}>
+            <Text style={[styles.bulkCount, { color: colors.primary }]}>{selectedIds.size} selected</Text>
+            <TouchableOpacity style={[styles.bulkSelectBtn, { backgroundColor: colors.primaryBorder }]} onPress={selectAll}>
+              <Text style={[styles.bulkSelectBtnText, { color: '#FFFFFF' }]}>All</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.bulkSelectBtn, { backgroundColor: colors.primaryBorder }]} onPress={deselectAll}>
+              <Text style={[styles.bulkSelectBtnText, { color: '#FFFFFF' }]}>None</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.bulkCancelBtn, { backgroundColor: colors.card }]} onPress={exitBulkMode}>
+              <Feather name="x" size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bulkChipScroll} contentContainerStyle={styles.bulkChipContent}>
+            <TouchableOpacity
+              style={[styles.bulkActionBtn, { backgroundColor: colors.card, borderColor: colors.primaryBorder, opacity: selectedIds.size === 0 ? 0.4 : 1 }]}
+              onPress={() => selectedIds.size > 0 && setBulkActionModal('category')}
+            >
+              <Feather name="tag" size={13} color={colors.primary} />
+              <Text style={[styles.bulkActionBtnText, { color: colors.primary }]}>Category</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.bulkActionBtn, { backgroundColor: colors.card, borderColor: colors.primaryBorder, opacity: selectedIds.size === 0 ? 0.4 : 1 }]}
+              onPress={() => selectedIds.size > 0 && setBulkActionModal('source')}
+            >
+              <Feather name="credit-card" size={13} color={colors.success} />
+              <Text style={[styles.bulkActionBtnText, { color: colors.success }]}>Source</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.bulkActionBtn, { backgroundColor: colors.card, borderColor: colors.dangerBg, opacity: selectedIds.size === 0 ? 0.4 : 1 }]}
+              onPress={handleBulkDelete}
+            >
+              <Feather name="trash-2" size={13} color={colors.danger} />
+              <Text style={[styles.bulkActionBtnText, { color: colors.danger }]}>Delete</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      )}
+
       <ScrollView
         style={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -248,57 +293,13 @@ export default function HomeScreen() {
             <Feather name="message-square" size={16} color={colors.primary} />
             <Text style={[styles.smsImportText, { color: colors.primary }]}>Import SMS</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.bulkToggleBtn, { backgroundColor: bulkMode ? colors.primary : colors.primaryBg, borderColor: colors.primaryBorder }]}
-            onPress={toggleBulkMode}
-          >
-            <Feather name="check-square" size={16} color={bulkMode ? '#FFFFFF' : colors.primary} />
-            <Text style={[styles.smsImportText, { color: bulkMode ? '#FFFFFF' : colors.primary }]}>
-              {bulkMode ? 'Cancel' : 'Select'}
-            </Text>
-          </TouchableOpacity>
         </View>
-
-        {bulkMode && (
-          <View style={[styles.bulkBar, { backgroundColor: colors.primaryBg, borderBottomColor: colors.primaryBorder }]}>
-            <Text style={[styles.bulkCount, { color: colors.primary }]}>{selectedIds.size} selected</Text>
-            <TouchableOpacity style={[styles.bulkSelectBtn, { backgroundColor: colors.primaryBorder }]} onPress={selectAll}>
-              <Text style={[styles.bulkSelectBtnText, { color: colors.card }]}>All</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.bulkSelectBtn, { backgroundColor: colors.primaryBorder }]} onPress={deselectAll}>
-              <Text style={[styles.bulkSelectBtnText, { color: colors.card }]}>None</Text>
-            </TouchableOpacity>
-            <View style={styles.bulkActions}>
-              <TouchableOpacity
-                style={[styles.bulkActionBtn, { backgroundColor: colors.card, borderColor: colors.border, opacity: selectedIds.size === 0 ? 0.4 : 1 }]}
-                onPress={() => selectedIds.size > 0 && setBulkActionModal('category')}
-              >
-                <Feather name="tag" size={13} color={colors.primary} />
-                <Text style={[styles.bulkActionBtnText, { color: colors.primary }]}>Category</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.bulkActionBtn, { backgroundColor: colors.card, borderColor: colors.border, opacity: selectedIds.size === 0 ? 0.4 : 1 }]}
-                onPress={() => selectedIds.size > 0 && setBulkActionModal('source')}
-              >
-                <Feather name="credit-card" size={13} color={colors.success} />
-                <Text style={[styles.bulkActionBtnText, { color: colors.success }]}>Source</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.bulkActionBtn, { backgroundColor: colors.card, borderColor: colors.border, opacity: selectedIds.size === 0 ? 0.4 : 1 }]}
-                onPress={handleBulkDelete}
-              >
-                <Feather name="trash-2" size={13} color={colors.danger} />
-                <Text style={[styles.bulkActionBtnText, { color: colors.danger }]}>Delete</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
 
         {sortedDates.length === 0 ? (
           <View style={styles.emptyState}>
             <Feather name="inbox" size={48} color={colors.textFaint} />
             <Text style={[styles.emptyTitle, { color: colors.textSub }]}>No transactions yet</Text>
-            <Text style={[styles.emptyText, { color: colors.textFaint }]}>Tap + to add your first transaction or import from SMS</Text>
+            <Text style={[styles.emptyText, { color: colors.textFaint }]}>Long-press any transaction to select, or tap + to add</Text>
           </View>
         ) : (
           sortedDates.map(date => (
@@ -311,6 +312,7 @@ export default function HomeScreen() {
               </View>
               {grouped[date].map(tx => {
                 const isBulkSelected = selectedIds.has(tx.id);
+                const isTransfer = !!(tx.transfer_to);
                 return (
                   <TouchableOpacity
                     key={tx.id}
@@ -327,7 +329,12 @@ export default function HomeScreen() {
                         setAddModalVisible(true);
                       }
                     }}
-                    onLongPress={() => !bulkMode && handleDelete(tx)}
+                    onLongPress={() => {
+                      if (!bulkMode) {
+                        enterBulkMode(tx.id);
+                      }
+                    }}
+                    delayLongPress={350}
                     activeOpacity={0.7}
                   >
                     {bulkMode && (
@@ -335,21 +342,27 @@ export default function HomeScreen() {
                         {isBulkSelected && <Feather name="check" size={12} color="#FFFFFF" />}
                       </View>
                     )}
-                    <View style={[styles.txIcon, { backgroundColor: tx.type === 'credit' ? colors.successBg : colors.dangerBg }]}>
+                    <View style={[styles.txIcon, {
+                      backgroundColor: isTransfer ? colors.cardAlt : tx.type === 'credit' ? colors.successBg : colors.dangerBg
+                    }]}>
                       <Feather
-                        name={tx.type === 'credit' ? 'arrow-down-left' : 'arrow-up-right'}
+                        name={isTransfer ? 'repeat' : tx.type === 'credit' ? 'arrow-down-left' : 'arrow-up-right'}
                         size={16}
-                        color={tx.type === 'credit' ? colors.success : colors.danger}
+                        color={isTransfer ? colors.textMuted : tx.type === 'credit' ? colors.success : colors.danger}
                       />
                     </View>
                     <View style={styles.txDetails}>
                       <Text style={[styles.txDescription, { color: colors.text }]} numberOfLines={1}>
                         {tx.description || tx.category}
                       </Text>
-                      <Text style={[styles.txMeta, { color: colors.textFaint }]}>{tx.category}{tx.bank ? ` • ${tx.bank}` : ''}</Text>
+                      <Text style={[styles.txMeta, { color: colors.textFaint }]}>
+                        {isTransfer ? `${tx.bank} → ${tx.transfer_to}` : `${tx.category}${tx.bank ? ` • ${tx.bank}` : ''}`}
+                      </Text>
                     </View>
-                    <Text style={[styles.txAmount, { color: tx.type === 'credit' ? colors.success : colors.danger }]}>
-                      {tx.type === 'credit' ? '+' : '-'}{formatCurrency(tx.amount)}
+                    <Text style={[styles.txAmount, {
+                      color: isTransfer ? colors.textMuted : tx.type === 'credit' ? colors.success : colors.danger
+                    }]}>
+                      {isTransfer ? '' : tx.type === 'credit' ? '+' : '-'}{formatCurrency(tx.amount)}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -451,15 +464,17 @@ const styles = StyleSheet.create({
   chipValue: { fontSize: 13, fontWeight: '700' },
   actionRow: { flexDirection: 'row', paddingHorizontal: 16, marginBottom: 4, gap: 8 },
   smsImportBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 10, paddingVertical: 10, borderWidth: 1 },
-  bulkToggleBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, borderWidth: 1 },
   smsImportText: { fontSize: 14, fontWeight: '600' },
-  bulkBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, gap: 6, marginBottom: 4 },
-  bulkCount: { fontSize: 13, fontWeight: '700', minWidth: 70 },
+  bulkBar: { borderBottomWidth: 1, paddingTop: 8, paddingBottom: 4 },
+  bulkBarTop: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, marginBottom: 6, gap: 6 },
+  bulkCount: { fontSize: 13, fontWeight: '700', flex: 1 },
   bulkSelectBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   bulkSelectBtnText: { fontSize: 12, fontWeight: '600' },
-  bulkActions: { flexDirection: 'row', gap: 6, marginLeft: 'auto' },
-  bulkActionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, borderWidth: 1 },
-  bulkActionBtnText: { fontSize: 11, fontWeight: '600' },
+  bulkCancelBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginLeft: 4 },
+  bulkChipScroll: { flexGrow: 0 },
+  bulkChipContent: { paddingHorizontal: 12, paddingBottom: 6, gap: 6, flexDirection: 'row' },
+  bulkActionBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1 },
+  bulkActionBtnText: { fontSize: 13, fontWeight: '600' },
   bulkCheckbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
   dateGroup: { paddingHorizontal: 16, marginBottom: 8 },
   dateHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8 },

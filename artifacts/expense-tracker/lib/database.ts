@@ -10,6 +10,7 @@ export interface Transaction {
   date: string;
   bank: string;
   smsId?: string;
+  transfer_to?: string | null;
 }
 
 export interface Category {
@@ -31,6 +32,7 @@ export const DEFAULT_CATEGORIES: Omit<Category, 'id'>[] = [
   { name: 'Education', icon: 'book', color: '#06B6D4', isDefault: true },
   { name: 'Travel', icon: 'map-pin', color: '#84CC16', isDefault: true },
   { name: 'Income', icon: 'trending-up', color: '#22C55E', isDefault: true },
+  { name: 'Transfer', icon: 'repeat', color: '#6B7280', isDefault: true },
   { name: 'Other', icon: 'more-horizontal', color: '#6B7280', isDefault: true },
 ];
 
@@ -69,7 +71,8 @@ export function initializeDatabase() {
       note TEXT DEFAULT '',
       date TEXT NOT NULL,
       bank TEXT DEFAULT '',
-      smsId TEXT UNIQUE
+      smsId TEXT UNIQUE,
+      transfer_to TEXT DEFAULT NULL
     );
 
     CREATE TABLE IF NOT EXISTS categories (
@@ -97,6 +100,7 @@ export function initializeDatabase() {
 function migrateDatabase(db: any) {
   try { db.execSync(`ALTER TABLE transactions ADD COLUMN smsId TEXT UNIQUE;`); } catch {}
   try { db.execSync(`ALTER TABLE categories ADD COLUMN isDefault INTEGER NOT NULL DEFAULT 0;`); } catch {}
+  try { db.execSync(`ALTER TABLE transactions ADD COLUMN transfer_to TEXT DEFAULT NULL;`); } catch {}
   try {
     db.execSync(`
       CREATE TABLE IF NOT EXISTS sms_import_log (
@@ -113,7 +117,7 @@ function migrateDatabase(db: any) {
       'coffee','truck','shopping-bag','zap','film','heart','package','book',
       'map-pin','trending-up','more-horizontal','home','music','gift','wifi',
       'phone','camera','monitor','dollar-sign','credit-card',
-      'briefcase','user','users','star','flag','tag','inbox','mail','bell'
+      'briefcase','user','users','star','flag','tag','inbox','mail','bell','repeat'
     );
   `);
 }
@@ -154,9 +158,9 @@ export function addTransaction(tx: Omit<Transaction, 'id'>): number {
   }
   const db = getDb();
   const result = db.runSync(
-    `INSERT INTO transactions (amount, type, category, description, note, date, bank, smsId)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [tx.amount, tx.type, tx.category, tx.description, tx.note, tx.date, tx.bank, tx.smsId ?? null]
+    `INSERT INTO transactions (amount, type, category, description, note, date, bank, smsId, transfer_to)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [tx.amount, tx.type, tx.category, tx.description, tx.note, tx.date, tx.bank, tx.smsId ?? null, tx.transfer_to ?? null]
   );
   return result.lastInsertRowId;
 }
@@ -169,8 +173,8 @@ export function updateTransaction(id: number, tx: Omit<Transaction, 'id'>) {
   }
   const db = getDb();
   db.runSync(
-    `UPDATE transactions SET amount=?, type=?, category=?, description=?, note=?, date=?, bank=? WHERE id=?`,
-    [tx.amount, tx.type, tx.category, tx.description, tx.note, tx.date, tx.bank, id]
+    `UPDATE transactions SET amount=?, type=?, category=?, description=?, note=?, date=?, bank=?, transfer_to=? WHERE id=?`,
+    [tx.amount, tx.type, tx.category, tx.description, tx.note, tx.date, tx.bank, tx.transfer_to ?? null, id]
   );
 }
 
@@ -262,9 +266,9 @@ export function bulkInsertSmsTransactions(txList: Omit<Transaction, 'id'>[]): nu
   for (const tx of txList) {
     try {
       db.runSync(
-        `INSERT OR IGNORE INTO transactions (amount, type, category, description, note, date, bank, smsId)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [tx.amount, tx.type, tx.category, tx.description, tx.note, tx.date, tx.bank, tx.smsId ?? null]
+        `INSERT OR IGNORE INTO transactions (amount, type, category, description, note, date, bank, smsId, transfer_to)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [tx.amount, tx.type, tx.category, tx.description, tx.note, tx.date, tx.bank, tx.smsId ?? null, tx.transfer_to ?? null]
       );
       inserted++;
     } catch {}
@@ -319,7 +323,7 @@ export function deleteCategory(id: number) {
 
 export function getMonthSummary(month: string): { spent: number; received: number; count: number } {
   if (Platform.OS === 'web') {
-    const txs = webStore.transactions.filter(t => t.date.startsWith(month));
+    const txs = webStore.transactions.filter(t => t.date.startsWith(month) && !t.transfer_to);
     return {
       spent: txs.filter(t => t.type === 'debit').reduce((s, t) => s + t.amount, 0),
       received: txs.filter(t => t.type === 'credit').reduce((s, t) => s + t.amount, 0),
@@ -329,9 +333,9 @@ export function getMonthSummary(month: string): { spent: number; received: numbe
   const db = getDb();
   const row = db.getFirstSync(
     `SELECT
-       COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE 0 END), 0) as spent,
-       COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END), 0) as received,
-       COUNT(*) as count
+       COALESCE(SUM(CASE WHEN type='debit' AND transfer_to IS NULL THEN amount ELSE 0 END), 0) as spent,
+       COALESCE(SUM(CASE WHEN type='credit' AND transfer_to IS NULL THEN amount ELSE 0 END), 0) as received,
+       COUNT(CASE WHEN transfer_to IS NULL THEN 1 END) as count
      FROM transactions WHERE date LIKE ?`,
     [`${month}%`]
   ) as { spent: number; received: number; count: number };
@@ -340,7 +344,7 @@ export function getMonthSummary(month: string): { spent: number; received: numbe
 
 export function getCategoryBreakdown(month: string): { category: string; total: number; count: number }[] {
   if (Platform.OS === 'web') {
-    const txs = webStore.transactions.filter(t => t.date.startsWith(month) && t.type === 'debit');
+    const txs = webStore.transactions.filter(t => t.date.startsWith(month) && t.type === 'debit' && !t.transfer_to);
     const map: Record<string, { total: number; count: number }> = {};
     for (const t of txs) {
       if (!map[t.category]) map[t.category] = { total: 0, count: 0 };
@@ -354,7 +358,7 @@ export function getCategoryBreakdown(month: string): { category: string; total: 
   const db = getDb();
   return db.getAllSync(
     `SELECT category, SUM(amount) as total, COUNT(*) as count
-     FROM transactions WHERE date LIKE ? AND type='debit'
+     FROM transactions WHERE date LIKE ? AND type='debit' AND transfer_to IS NULL
      GROUP BY category ORDER BY total DESC`,
     [`${month}%`]
   ) as { category: string; total: number; count: number }[];
@@ -376,7 +380,7 @@ export function getMonthlyTrend(numMonths: number): MonthlyTrendPoint[] {
     const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     const label = d.toLocaleDateString('en-IN', { month: 'short' });
     if (Platform.OS === 'web') {
-      const txs = webStore.transactions.filter(t => t.date.startsWith(month));
+      const txs = webStore.transactions.filter(t => t.date.startsWith(month) && !t.transfer_to);
       points.push({
         month,
         label,
@@ -387,9 +391,9 @@ export function getMonthlyTrend(numMonths: number): MonthlyTrendPoint[] {
     } else {
       const db = getDb();
       const row = db.getFirstSync(
-        `SELECT COALESCE(SUM(CASE WHEN type='debit' THEN amount ELSE 0 END),0) as spent,
-                COALESCE(SUM(CASE WHEN type='credit' THEN amount ELSE 0 END),0) as received,
-                COUNT(*) as count
+        `SELECT COALESCE(SUM(CASE WHEN type='debit' AND transfer_to IS NULL THEN amount ELSE 0 END),0) as spent,
+                COALESCE(SUM(CASE WHEN type='credit' AND transfer_to IS NULL THEN amount ELSE 0 END),0) as received,
+                COUNT(CASE WHEN transfer_to IS NULL THEN 1 END) as count
          FROM transactions WHERE date LIKE ?`,
         [`${month}%`]
       ) as { spent: number; received: number; count: number } | null;
@@ -411,7 +415,7 @@ export interface TopTransaction {
 export function getTopTransactions(month: string, limit = 5, type: 'debit' | 'credit' = 'debit'): TopTransaction[] {
   if (Platform.OS === 'web') {
     return webStore.transactions
-      .filter(t => t.date.startsWith(month) && t.type === type)
+      .filter(t => t.date.startsWith(month) && t.type === type && !t.transfer_to)
       .sort((a, b) => b.amount - a.amount)
       .slice(0, limit)
       .map(t => ({ id: t.id, amount: t.amount, category: t.category, description: t.description, date: t.date, type: t.type }));
@@ -419,7 +423,7 @@ export function getTopTransactions(month: string, limit = 5, type: 'debit' | 'cr
   const db = getDb();
   return db.getAllSync(
     `SELECT id, amount, category, description, date, type
-     FROM transactions WHERE date LIKE ? AND type=?
+     FROM transactions WHERE date LIKE ? AND type=? AND transfer_to IS NULL
      ORDER BY amount DESC LIMIT ?`,
     [`${month}%`, type, limit]
   ) as TopTransaction[];
@@ -439,7 +443,7 @@ export function getDayOfWeekStats(month: string): DayOfWeekStat[] {
   for (let i = 0; i < 7; i++) map[i] = { total: 0, count: 0 };
 
   if (Platform.OS === 'web') {
-    const txs = webStore.transactions.filter(t => t.date.startsWith(month) && t.type === 'debit');
+    const txs = webStore.transactions.filter(t => t.date.startsWith(month) && t.type === 'debit' && !t.transfer_to);
     for (const t of txs) {
       const dow = new Date(t.date + 'T00:00:00').getDay();
       map[dow].total += t.amount;
@@ -448,7 +452,7 @@ export function getDayOfWeekStats(month: string): DayOfWeekStat[] {
   } else {
     const db = getDb();
     const rows = db.getAllSync(
-      `SELECT date, amount FROM transactions WHERE date LIKE ? AND type='debit'`,
+      `SELECT date, amount FROM transactions WHERE date LIKE ? AND type='debit' AND transfer_to IS NULL`,
       [`${month}%`]
     ) as { date: string; amount: number }[];
     for (const r of rows) {
@@ -480,12 +484,12 @@ export function getWeeklySpend(month: string): WeeklySpendPoint[] {
   let rows: { date: string; amount: number }[] = [];
   if (Platform.OS === 'web') {
     rows = webStore.transactions
-      .filter(t => t.date.startsWith(month) && t.type === 'debit')
+      .filter(t => t.date.startsWith(month) && t.type === 'debit' && !t.transfer_to)
       .map(t => ({ date: t.date, amount: t.amount }));
   } else {
     const db = getDb();
     rows = db.getAllSync(
-      `SELECT date, amount FROM transactions WHERE date LIKE ? AND type='debit'`,
+      `SELECT date, amount FROM transactions WHERE date LIKE ? AND type='debit' AND transfer_to IS NULL`,
       [`${month}%`]
     ) as { date: string; amount: number }[];
   }
@@ -508,7 +512,7 @@ export interface SourceStat {
 
 export function getSourceStats(month: string): SourceStat {
   if (Platform.OS === 'web') {
-    const txs = webStore.transactions.filter(t => t.date.startsWith(month) && t.type === 'debit');
+    const txs = webStore.transactions.filter(t => t.date.startsWith(month) && t.type === 'debit' && !t.transfer_to);
     const sms = txs.filter(t => t.smsId);
     const manual = txs.filter(t => !t.smsId);
     return {
@@ -521,14 +525,46 @@ export function getSourceStats(month: string): SourceStat {
   const db = getDb();
   const row = db.getFirstSync(
     `SELECT
-       COALESCE(SUM(CASE WHEN smsId IS NOT NULL AND type='debit' THEN amount ELSE 0 END),0) as smsImported,
-       COUNT(CASE WHEN smsId IS NOT NULL AND type='debit' THEN 1 END) as smsCount,
-       COALESCE(SUM(CASE WHEN smsId IS NULL AND type='debit' THEN amount ELSE 0 END),0) as manual,
-       COUNT(CASE WHEN smsId IS NULL AND type='debit' THEN 1 END) as manualCount
+       COALESCE(SUM(CASE WHEN smsId IS NOT NULL AND type='debit' AND transfer_to IS NULL THEN amount ELSE 0 END),0) as smsImported,
+       COUNT(CASE WHEN smsId IS NOT NULL AND type='debit' AND transfer_to IS NULL THEN 1 END) as smsCount,
+       COALESCE(SUM(CASE WHEN smsId IS NULL AND type='debit' AND transfer_to IS NULL THEN amount ELSE 0 END),0) as manual,
+       COUNT(CASE WHEN smsId IS NULL AND type='debit' AND transfer_to IS NULL THEN 1 END) as manualCount
      FROM transactions WHERE date LIKE ?`,
     [`${month}%`]
   ) as SourceStat | null;
   return row ?? { smsImported: 0, smsCount: 0, manual: 0, manualCount: 0 };
+}
+
+export interface SourceBalance {
+  source: string;
+  credits: number;
+  debits: number;
+  transferOut: number;
+  transferIn: number;
+}
+
+export function getSourceTransactionBalance(source: string): SourceBalance {
+  if (Platform.OS === 'web') {
+    const txs = webStore.transactions;
+    return {
+      source,
+      credits: txs.filter(t => t.bank === source && t.type === 'credit' && !t.transfer_to).reduce((s, t) => s + t.amount, 0),
+      debits: txs.filter(t => t.bank === source && t.type === 'debit' && !t.transfer_to).reduce((s, t) => s + t.amount, 0),
+      transferOut: txs.filter(t => t.bank === source && t.transfer_to).reduce((s, t) => s + t.amount, 0),
+      transferIn: txs.filter(t => t.transfer_to === source).reduce((s, t) => s + t.amount, 0),
+    };
+  }
+  const db = getDb();
+  const row = db.getFirstSync(
+    `SELECT
+       COALESCE(SUM(CASE WHEN bank=? AND type='credit' AND transfer_to IS NULL THEN amount ELSE 0 END),0) as credits,
+       COALESCE(SUM(CASE WHEN bank=? AND type='debit' AND transfer_to IS NULL THEN amount ELSE 0 END),0) as debits,
+       COALESCE(SUM(CASE WHEN bank=? AND transfer_to IS NOT NULL THEN amount ELSE 0 END),0) as transferOut,
+       COALESCE(SUM(CASE WHEN transfer_to=? THEN amount ELSE 0 END),0) as transferIn
+     FROM transactions`,
+    [source, source, source, source]
+  ) as { credits: number; debits: number; transferOut: number; transferIn: number } | null;
+  return { source, ...(row ?? { credits: 0, debits: 0, transferOut: 0, transferIn: 0 }) };
 }
 
 export interface BackupData {
@@ -589,9 +625,9 @@ export function restoreBackup(data: BackupData): { inserted: number; skipped: nu
     try {
       if (!tx.amount || !tx.type || !tx.date) { skipped++; continue; }
       db.runSync(
-        `INSERT OR IGNORE INTO transactions (amount, type, category, description, note, date, bank, smsId)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [tx.amount, tx.type, tx.category || 'Other', tx.description || '', tx.note || '', tx.date, tx.bank || '', tx.smsId ?? null]
+        `INSERT OR IGNORE INTO transactions (amount, type, category, description, note, date, bank, smsId, transfer_to)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [tx.amount, tx.type, tx.category || 'Other', tx.description || '', tx.note || '', tx.date, tx.bank || '', tx.smsId ?? null, (tx as any).transfer_to ?? null]
       );
       inserted++;
     } catch (e: any) {

@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   TextInput,
   Alert,
-  Switch,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
@@ -21,12 +20,14 @@ import {
   getDayOfWeekStats,
   getSourceStats,
   getWeeklySpend,
+  getSourceTransactionBalance,
   MonthlyTrendPoint,
   TopTransaction,
   DayOfWeekStat,
   SourceStat,
   WeeklySpendPoint,
 } from '../../lib/database';
+import { getPaymentSources } from '../../lib/paymentSources';
 import { useTheme } from '../../lib/theme';
 
 function fmtMoney(n: number, compact = false): string {
@@ -45,11 +46,21 @@ function getBudgetKey(monthKey: string) {
   return `budget_${monthKey}`;
 }
 
-function getCarryForwardKey(monthKey: string) {
-  return `carry_forward_${monthKey}`;
+function getOpeningBalanceKey(source: string) {
+  return `source_ob_${source}`;
 }
 
 type Tab = 'overview' | 'trends' | 'insights';
+
+interface SourceBalanceInfo {
+  source: string;
+  openingBalance: number;
+  credits: number;
+  debits: number;
+  transferOut: number;
+  transferIn: number;
+  currentBalance: number;
+}
 
 export default function AnalyticsScreen() {
   const { colors } = useTheme();
@@ -60,7 +71,7 @@ export default function AnalyticsScreen() {
   const [budget, setBudget] = useState<number | null>(null);
   const [editingBudget, setEditingBudget] = useState(false);
   const [budgetInput, setBudgetInput] = useState('');
-  const [carryForward, setCarryForward] = useState(false);
+  const [sourceBalances, setSourceBalances] = useState<SourceBalanceInfo[]>([]);
 
   const [summary, setSummary] = useState({ spent: 0, received: 0, count: 0 });
   const [prevSummary, setPrevSummary] = useState({ spent: 0, received: 0, count: 0 });
@@ -78,7 +89,6 @@ export default function AnalyticsScreen() {
   const prevYear = month === 1 ? year - 1 : year;
   const prevKey = getMonthKey(prevYear, prevMonth);
   const monthLabel = new Date(year, month - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-  const prevMonthLabel = new Date(prevYear, prevMonth - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 
   const loadData = useCallback(async () => {
     const s = getMonthSummary(monthKey);
@@ -99,11 +109,29 @@ export default function AnalyticsScreen() {
     try {
       const stored = await AsyncStorage.getItem(getBudgetKey(monthKey));
       setBudget(stored ? parseFloat(stored) : null);
-      const cf = await AsyncStorage.getItem(getCarryForwardKey(monthKey));
-      setCarryForward(cf === 'true');
     } catch {
       setBudget(null);
     }
+    try {
+      const sources = await getPaymentSources();
+      const balInfos: SourceBalanceInfo[] = [];
+      for (const source of sources) {
+        const obStr = await AsyncStorage.getItem(getOpeningBalanceKey(source));
+        const openingBalance = obStr ? parseFloat(obStr) : 0;
+        const txBal = getSourceTransactionBalance(source);
+        const currentBalance = openingBalance + txBal.credits - txBal.debits + txBal.transferIn - txBal.transferOut;
+        balInfos.push({
+          source,
+          openingBalance,
+          credits: txBal.credits,
+          debits: txBal.debits,
+          transferOut: txBal.transferOut,
+          transferIn: txBal.transferIn,
+          currentBalance,
+        });
+      }
+      setSourceBalances(balInfos);
+    } catch {}
   }, [monthKey, prevKey]);
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
@@ -132,16 +160,10 @@ export default function AnalyticsScreen() {
     setEditingBudget(false);
   };
 
-  const handleCarryForwardToggle = async (val: boolean) => {
-    setCarryForward(val);
-    await AsyncStorage.setItem(getCarryForwardKey(monthKey), val.toString());
-  };
-
   const currentMonthKey = getMonthKey(now.getFullYear(), now.getMonth() + 1);
 
-  const effectiveReceived = summary.received + (carryForward ? prevSummary.received : 0);
   const spentChange = prevSummary.spent > 0 ? ((summary.spent - prevSummary.spent) / prevSummary.spent) * 100 : 0;
-  const savingsRate = effectiveReceived > 0 ? ((effectiveReceived - summary.spent) / effectiveReceived) * 100 : 0;
+  const savingsRate = summary.received > 0 ? ((summary.received - summary.spent) / summary.received) * 100 : 0;
   const avgTx = summary.count > 0 ? summary.spent / summary.count : 0;
   const maxBreakdown = breakdown.length > 0 ? breakdown[0].total : 1;
   const maxTrend = Math.max(...trend.map(t => t.spent), 1);
@@ -203,10 +225,8 @@ export default function AnalyticsScreen() {
                 </View>
                 <View style={[styles.kpiDivider, { backgroundColor: colors.border }]} />
                 <View style={styles.kpiItem}>
-                  <Text style={[styles.kpiLabel, { color: colors.textFaint }]}>
-                    {carryForward ? 'Total Received*' : 'Total Received'}
-                  </Text>
-                  <Text style={[styles.kpiValue, { color: colors.success }]}>{fmtMoney(effectiveReceived)}</Text>
+                  <Text style={[styles.kpiLabel, { color: colors.textFaint }]}>Total Received</Text>
+                  <Text style={[styles.kpiValue, { color: colors.success }]}>{fmtMoney(summary.received)}</Text>
                   <Text style={[styles.kpiSub, { color: colors.textFaint }]}>{summary.count} transactions</Text>
                 </View>
               </View>
@@ -214,8 +234,8 @@ export default function AnalyticsScreen() {
               <View style={[styles.netRow, { backgroundColor: colors.cardAlt }]}>
                 <View style={styles.netItem}>
                   <Text style={[styles.netLabel, { color: colors.textFaint }]}>Net</Text>
-                  <Text style={[styles.netValue, { color: effectiveReceived - summary.spent >= 0 ? colors.success : colors.danger }]}>
-                    {effectiveReceived - summary.spent >= 0 ? '+' : '-'}{fmtMoney(Math.abs(effectiveReceived - summary.spent))}
+                  <Text style={[styles.netValue, { color: summary.received - summary.spent >= 0 ? colors.success : colors.danger }]}>
+                    {summary.received - summary.spent >= 0 ? '+' : '-'}{fmtMoney(Math.abs(summary.received - summary.spent))}
                   </Text>
                 </View>
                 <View style={styles.netItem}>
@@ -231,32 +251,35 @@ export default function AnalyticsScreen() {
               </View>
             </View>
 
-            <View style={[styles.card, { backgroundColor: colors.card }]}>
-              <View style={styles.carryRow}>
-                <View style={styles.carryInfo}>
-                  <Text style={[styles.cardTitle, { color: colors.text }]}>Salary Carry-forward</Text>
-                  <Text style={[styles.cardSub, { color: colors.textFaint }]}>
-                    {carryForward
-                      ? `Including ${fmtMoney(prevSummary.received)} income from ${prevMonthLabel}`
-                      : `Toggle to include ${prevMonthLabel}'s income (${fmtMoney(prevSummary.received)}) in this month's totals`}
+            {sourceBalances.length > 0 && (
+              <View style={[styles.card, { backgroundColor: colors.card }]}>
+                <Text style={[styles.cardTitle, { color: colors.text }]}>Source Balances</Text>
+                <Text style={[styles.cardSub, { color: colors.textFaint }]}>Current balance per account (all-time). Set opening balances in Settings.</Text>
+                {sourceBalances.map((sb, idx) => (
+                  <View key={sb.source} style={[styles.sourceBalRow, idx < sourceBalances.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+                    <View style={[styles.sourceBalIcon, { backgroundColor: sb.currentBalance >= 0 ? colors.successBg : colors.dangerBg }]}>
+                      <Feather name="credit-card" size={16} color={sb.currentBalance >= 0 ? colors.success : colors.danger} />
+                    </View>
+                    <View style={styles.sourceBalInfo}>
+                      <Text style={[styles.sourceBalName, { color: colors.text }]}>{sb.source}</Text>
+                      <Text style={[styles.sourceBalSub, { color: colors.textFaint }]}>
+                        +{fmtMoney(sb.credits, true)} in · -{fmtMoney(sb.debits, true)} out
+                        {(sb.transferIn > 0 || sb.transferOut > 0) ? ` · transfers: ${fmtMoney(sb.transferIn - sb.transferOut, true)}` : ''}
+                      </Text>
+                    </View>
+                    <Text style={[styles.sourceBalAmount, { color: sb.currentBalance >= 0 ? colors.success : colors.danger }]}>
+                      {sb.currentBalance >= 0 ? '' : '-'}{fmtMoney(Math.abs(sb.currentBalance))}
+                    </Text>
+                  </View>
+                ))}
+                <View style={[styles.sourceBalTotal, { backgroundColor: colors.cardAlt }]}>
+                  <Text style={[styles.sourceBalTotalLabel, { color: colors.textMuted }]}>Total Across All Accounts</Text>
+                  <Text style={[styles.sourceBalTotalAmt, { color: sourceBalances.reduce((s, b) => s + b.currentBalance, 0) >= 0 ? colors.success : colors.danger }]}>
+                    {fmtMoney(sourceBalances.reduce((s, b) => s + b.currentBalance, 0))}
                   </Text>
                 </View>
-                <Switch
-                  value={carryForward}
-                  onValueChange={handleCarryForwardToggle}
-                  trackColor={{ false: colors.border, true: colors.primaryBorder }}
-                  thumbColor={carryForward ? colors.primary : colors.textFaint}
-                />
               </View>
-              {carryForward && prevSummary.received > 0 && (
-                <View style={[styles.carryNote, { backgroundColor: colors.successBg }]}>
-                  <Feather name="info" size={13} color={colors.success} />
-                  <Text style={[styles.carryNoteText, { color: colors.successText }]}>
-                    Received shows ₹{fmtMoney(summary.received)} this month + ₹{fmtMoney(prevSummary.received)} carried from {prevMonthLabel}. Useful when your salary arrives at month-end for the next month's expenses.
-                  </Text>
-                </View>
-              )}
-            </View>
+            )}
 
             <View style={[styles.card, { backgroundColor: colors.card }]}>
               <View style={styles.budgetHeaderRow}>
@@ -678,10 +701,15 @@ const styles = StyleSheet.create({
   netItem: { flex: 1, alignItems: 'center' },
   netLabel: { fontSize: 11, marginBottom: 4 },
   netValue: { fontSize: 15, fontWeight: '700' },
-  carryRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  carryInfo: { flex: 1 },
-  carryNote: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 12, padding: 12, borderRadius: 10 },
-  carryNoteText: { flex: 1, fontSize: 12, lineHeight: 18 },
+  sourceBalRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12 },
+  sourceBalIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  sourceBalInfo: { flex: 1 },
+  sourceBalName: { fontSize: 15, fontWeight: '600' },
+  sourceBalSub: { fontSize: 12, marginTop: 2 },
+  sourceBalAmount: { fontSize: 16, fontWeight: '700' },
+  sourceBalTotal: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 10, padding: 12, marginTop: 8 },
+  sourceBalTotalLabel: { fontSize: 13, fontWeight: '500' },
+  sourceBalTotalAmt: { fontSize: 16, fontWeight: '800' },
   budgetHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   budgetEditBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
   budgetEditBtnText: { fontSize: 13, fontWeight: '600' },
@@ -707,83 +735,83 @@ const styles = StyleSheet.create({
   budgetEmptyText: { fontSize: 15, fontWeight: '600', marginTop: 8 },
   budgetEmptyHint: { fontSize: 13, marginTop: 4 },
   catRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
-  catRank: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
-  catRankText: { fontSize: 11, fontWeight: '700' },
+  catRank: { width: 26, height: 26, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  catRankText: { fontSize: 12, fontWeight: '700' },
   catInfo: { flex: 1 },
-  catTopRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-  catDot: { width: 10, height: 10, borderRadius: 5, marginRight: 6 },
-  catName: { flex: 1, fontSize: 14, fontWeight: '600' },
-  catCount: { fontSize: 12, marginRight: 4 },
-  catPct: { fontSize: 12, fontWeight: '600', marginRight: 6 },
-  catAmount: { fontSize: 14, fontWeight: '700' },
+  catTopRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 6 },
+  catDot: { width: 8, height: 8, borderRadius: 4 },
+  catName: { flex: 1, fontSize: 14, fontWeight: '500' },
+  catCount: { fontSize: 11 },
+  catPct: { fontSize: 12, fontWeight: '600', minWidth: 28, textAlign: 'right' },
+  catAmount: { fontSize: 14, fontWeight: '700', minWidth: 60, textAlign: 'right' },
   barBg: { height: 6, borderRadius: 3, overflow: 'hidden' },
   barFill: { height: '100%', borderRadius: 3 },
   topTxRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1 },
-  topTxRank: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  topTxRank: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginRight: 10 },
   topTxRankText: { fontSize: 12, fontWeight: '700' },
   topTxInfo: { flex: 1 },
   topTxDesc: { fontSize: 14, fontWeight: '600' },
   topTxMeta: { fontSize: 12, marginTop: 2 },
   topTxAmount: { fontSize: 15, fontWeight: '700' },
-  barChart: { flexDirection: 'row', alignItems: 'flex-end', height: 140, marginTop: 8 },
-  barChartCol: { flex: 1, alignItems: 'center' },
-  barChartVal: { fontSize: 9, marginBottom: 4, textAlign: 'center' },
-  barChartBarBg: { flex: 1, width: '60%', justifyContent: 'flex-end', borderRadius: 4, overflow: 'hidden' },
+  barChart: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', height: 140, marginTop: 8 },
+  barChartCol: { flex: 1, alignItems: 'center', gap: 4 },
+  barChartVal: { fontSize: 9, textAlign: 'center' },
+  barChartBarBg: { width: '70%', flex: 1, borderRadius: 4, overflow: 'hidden', justifyContent: 'flex-end' },
   barChartBarFill: { width: '100%', borderRadius: 4 },
-  barChartLabel: { fontSize: 11, marginTop: 6 },
-  weekRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 6 },
-  weekLabel: { fontSize: 12, fontWeight: '700', width: 46 },
+  barChartLabel: { fontSize: 10 },
+  weekRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  weekLabel: { fontSize: 12, fontWeight: '600', width: 44 },
   weekDates: { fontSize: 11, width: 38 },
   weekBarBg: { flex: 1, height: 8, borderRadius: 4, overflow: 'hidden' },
   weekBarFill: { height: '100%', borderRadius: 4 },
-  weekAmt: { fontSize: 13, fontWeight: '600', width: 50, textAlign: 'right' },
-  weekCount: { fontSize: 11, width: 22, textAlign: 'right' },
-  momRow: { flexDirection: 'row', alignItems: 'center' },
+  weekAmt: { fontSize: 12, fontWeight: '600', minWidth: 40, textAlign: 'right' },
+  weekCount: { fontSize: 10, minWidth: 16 },
+  momRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
   momItem: { flex: 1, alignItems: 'center' },
   momItemLabel: { fontSize: 12, marginBottom: 6 },
   momAmount: { fontSize: 20, fontWeight: '800' },
   momCount: { fontSize: 12, marginTop: 4 },
-  momMiddle: { alignItems: 'center', paddingHorizontal: 8 },
-  momPct: { fontSize: 16, fontWeight: '800', marginTop: 4 },
-  incomeExpRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  incomeExpLabel: { fontSize: 12, width: 30, marginRight: 8 },
+  momMiddle: { alignItems: 'center', paddingHorizontal: 12 },
+  momPct: { fontSize: 16, fontWeight: '700', marginTop: 4 },
+  incomeExpRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 10 },
+  incomeExpLabel: { fontSize: 12, width: 30 },
   incomeExpBars: { flex: 1, gap: 4 },
-  incomeExpBarRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  incomeExpBarRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   incomeExpBar: { height: 8, borderRadius: 4, minWidth: 4 },
-  incomeExpBarLabel: { fontSize: 11 },
-  legend: { flexDirection: 'row', gap: 16, marginTop: 8, justifyContent: 'center' },
+  incomeExpBarLabel: { fontSize: 10 },
+  legend: { flexDirection: 'row', gap: 16, justifyContent: 'center', marginTop: 10 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 10, height: 10, borderRadius: 5 },
   legendText: { fontSize: 12 },
   metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 8 },
-  metricBox: { flex: 1, minWidth: '40%', borderRadius: 12, padding: 14, alignItems: 'center' },
-  metricIcon: { fontSize: 22, marginBottom: 4 },
-  metricValue: { fontSize: 18, fontWeight: '800', marginBottom: 2 },
-  metricLabel: { fontSize: 11, textAlign: 'center' },
-  dowChart: { flexDirection: 'row', alignItems: 'flex-end', height: 120, marginTop: 16, marginBottom: 12 },
-  dowCol: { flex: 1, alignItems: 'center' },
-  dowVal: { fontSize: 9, marginBottom: 4, textAlign: 'center' },
-  dowBarBg: { flex: 1, width: '50%', justifyContent: 'flex-end', borderRadius: 4, overflow: 'hidden' },
-  dowBarFill: { width: '100%', borderRadius: 4 },
-  dowLabel: { fontSize: 11, marginTop: 6 },
-  dowInsight: { fontSize: 12, textAlign: 'center', fontStyle: 'italic', marginTop: 4 },
-  efficiencyGrid: { flexDirection: 'row', gap: 8, marginTop: 8, marginBottom: 12 },
-  efficiencyItem: { flex: 1, borderRadius: 12, padding: 12, alignItems: 'center' },
-  efficiencyIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  efficiencyValue: { fontSize: 17, fontWeight: '800', marginBottom: 4 },
-  efficiencyLabel: { fontSize: 11, textAlign: 'center' },
-  budgetAlertBox: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, borderRadius: 10 },
-  budgetAlertText: { flex: 1, fontSize: 13, fontWeight: '500' },
-  sourceRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  metricBox: { flex: 1, minWidth: '45%', borderRadius: 12, padding: 14, alignItems: 'center' },
+  metricIcon: { fontSize: 22, marginBottom: 6 },
+  metricValue: { fontSize: 18, fontWeight: '800' },
+  metricLabel: { fontSize: 11, marginTop: 4, textAlign: 'center' },
+  dowChart: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', height: 120, marginTop: 8 },
+  dowCol: { flex: 1, alignItems: 'center', gap: 4 },
+  dowVal: { fontSize: 8, textAlign: 'center' },
+  dowBarBg: { width: '70%', flex: 1, borderRadius: 3, overflow: 'hidden', justifyContent: 'flex-end' },
+  dowBarFill: { width: '100%', borderRadius: 3 },
+  dowLabel: { fontSize: 10 },
+  dowInsight: { fontSize: 12, marginTop: 10, fontStyle: 'italic', textAlign: 'center' },
+  efficiencyGrid: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  efficiencyItem: { flex: 1, borderRadius: 12, padding: 12, alignItems: 'center', gap: 6 },
+  efficiencyIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  efficiencyValue: { fontSize: 17, fontWeight: '800' },
+  efficiencyLabel: { fontSize: 10, textAlign: 'center' },
+  budgetAlertBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, padding: 10, borderRadius: 10, marginTop: 12 },
+  budgetAlertText: { flex: 1, fontSize: 13, fontWeight: '500', lineHeight: 18 },
+  sourceRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
   sourceItem: { flex: 1, alignItems: 'center', gap: 4 },
   sourceDivider: { width: 1, height: 60 },
   sourceLabel: { fontSize: 12 },
-  sourceValue: { fontSize: 16, fontWeight: '700' },
-  sourceCount: { fontSize: 12 },
-  sourceBar: { height: 8, borderRadius: 4, flexDirection: 'row', overflow: 'hidden', marginBottom: 6 },
-  sourceBarSms: { backgroundColor: '#818CF8' },
-  sourceBarManual: { backgroundColor: '#34D399' },
-  sourcePctText: { fontSize: 12, textAlign: 'center' },
+  sourceValue: { fontSize: 17, fontWeight: '700' },
+  sourceCount: { fontSize: 11 },
+  sourceBar: { flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', marginTop: 12 },
+  sourceBarSms: { backgroundColor: '#6366F1' },
+  sourceBarManual: { backgroundColor: '#10B981' },
+  sourcePctText: { fontSize: 12, marginTop: 6, textAlign: 'center' },
   emptyState: { alignItems: 'center', paddingVertical: 24 },
   emptyText: { marginTop: 8, fontSize: 14 },
 });

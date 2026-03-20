@@ -1,4 +1,38 @@
 import { useColorScheme } from 'react-native';
+import { useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const THEME_KEY = 'theme_preference';
+export type ThemeMode = 'light' | 'dark' | 'system';
+
+let themeOverride: ThemeMode = 'system';
+let initialized = false;
+const listeners = new Set<() => void>();
+
+function notify() {
+  listeners.forEach(fn => fn());
+}
+
+export function setThemeMode(mode: ThemeMode) {
+  themeOverride = mode;
+  AsyncStorage.setItem(THEME_KEY, mode).catch(() => {});
+  notify();
+}
+
+export function getThemeMode(): ThemeMode {
+  return themeOverride;
+}
+
+function loadThemePreference() {
+  if (initialized) return;
+  initialized = true;
+  AsyncStorage.getItem(THEME_KEY).then(val => {
+    if (val === 'light' || val === 'dark' || val === 'system') {
+      themeOverride = val as ThemeMode;
+      notify();
+    }
+  }).catch(() => {});
+}
 
 const LIGHT = {
   bg: '#F9FAFB',
@@ -67,9 +101,21 @@ const DARK: typeof LIGHT = {
 };
 
 export function useTheme() {
-  const scheme = useColorScheme();
-  const dark = scheme === 'dark';
-  return { dark, colors: dark ? DARK : LIGHT };
+  const [, rerender] = useState(0);
+  const systemScheme = useColorScheme();
+
+  useEffect(() => {
+    loadThemePreference();
+    const fn = () => rerender(n => n + 1);
+    listeners.add(fn);
+    return () => { listeners.delete(fn); };
+  }, []);
+
+  const dark = themeOverride === 'system'
+    ? systemScheme === 'dark'
+    : themeOverride === 'dark';
+
+  return { dark, colors: dark ? DARK : LIGHT, themeMode: themeOverride };
 }
 
 export type ThemeColors = typeof LIGHT;
