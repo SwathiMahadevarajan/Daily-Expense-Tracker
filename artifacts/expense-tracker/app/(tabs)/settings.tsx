@@ -33,6 +33,7 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 }
 
 const REMINDER_KEY = 'evening_reminder';
+const LOCK_ENABLED_KEY = 'app_lock_enabled';
 const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0;
 
 const EVENING_HOURS = [
@@ -138,6 +139,7 @@ export default function SettingsScreen() {
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+  const [lockEnabled, setLockEnabled] = useState(false);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     sources: true,
     balances: true,
@@ -152,6 +154,10 @@ export default function SettingsScreen() {
   const loadData = useCallback(async () => {
     try { setCategories(getCategories()); } catch {}
     try { setAvailableMonths(getAvailableMonths()); } catch {}
+    try {
+      const lv = await AsyncStorage.getItem(LOCK_ENABLED_KEY);
+      setLockEnabled(lv === 'true');
+    } catch {}
     try {
       const sources = await getPaymentSources();
       setPaymentSources(sources);
@@ -345,6 +351,32 @@ export default function SettingsScreen() {
     return currentBalance - netTx;
   };
 
+  const handleToggleLock = async (enable: boolean) => {
+    if (Platform.OS === 'web') {
+      Alert.alert('Not Available', 'App Lock is only available on Android and iOS devices.');
+      return;
+    }
+    if (enable) {
+      try {
+        const LocalAuth = await import('expo-local-authentication');
+        const hasHardware = await LocalAuth.hasHardwareAsync();
+        const isEnrolled = await LocalAuth.isEnrolledAsync();
+        if (!hasHardware || !isEnrolled) {
+          Alert.alert('Not Available', 'Your device does not have biometrics or a screen lock set up. Please set one up in your phone settings first.');
+          return;
+        }
+        const result = await LocalAuth.authenticateAsync({ promptMessage: 'Confirm to enable App Lock', cancelLabel: 'Cancel', disableDeviceFallback: false });
+        if (!result.success) return;
+      } catch {
+        Alert.alert('Error', 'Could not verify authentication. Please try again.');
+        return;
+      }
+    }
+    await AsyncStorage.setItem(LOCK_ENABLED_KEY, enable ? 'true' : 'false');
+    setLockEnabled(enable);
+    if (!enable) Alert.alert('App Lock Disabled', 'The app will no longer ask for authentication when opened.');
+  };
+
   const handleDeleteByMonth = (month: string) => {
     const label = new Date(month + '-01').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
     Alert.alert(
@@ -420,6 +452,42 @@ export default function SettingsScreen() {
               </TouchableOpacity>
             ))}
           </View>
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Security</Text>
+        <View style={[styles.plainCard, { backgroundColor: colors.card }]}>
+          <View style={styles.lockRow}>
+            <View style={[styles.lockIconWrap, { backgroundColor: lockEnabled ? colors.primaryBg : colors.cardAlt }]}>
+              <Feather name={lockEnabled ? 'lock' : 'unlock'} size={20} color={lockEnabled ? colors.primary : colors.textFaint} />
+            </View>
+            <View style={styles.lockInfo}>
+              <Text style={[styles.lockLabel, { color: colors.text }]}>App Lock</Text>
+              <Text style={[styles.lockSub, { color: colors.textFaint }]}>
+                {Platform.OS === 'web'
+                  ? 'Available on Android & iOS only'
+                  : lockEnabled
+                  ? 'App locks when sent to background'
+                  : 'Use your fingerprint, Face ID, or phone PIN'}
+              </Text>
+            </View>
+            <Switch
+              value={lockEnabled}
+              onValueChange={handleToggleLock}
+              trackColor={{ false: colors.border, true: colors.primaryBorder }}
+              thumbColor={lockEnabled ? colors.primary : colors.textFaint}
+              disabled={Platform.OS === 'web'}
+            />
+          </View>
+          {lockEnabled && (
+            <View style={[styles.lockActiveBox, { backgroundColor: colors.primaryBg }]}>
+              <Feather name="shield" size={13} color={colors.primary} />
+              <Text style={[styles.lockActiveText, { color: colors.primary }]}>
+                The app will ask for your phone's authentication each time it's reopened from the background.
+              </Text>
+            </View>
+          )}
         </View>
       </View>
 
@@ -835,6 +903,13 @@ const styles = StyleSheet.create({
   builtInBadgeText: { fontSize: 10, fontWeight: '600' },
   catActions: { flexDirection: 'row', gap: 6 },
   catActionBtn: { padding: 7, borderRadius: 8 },
+  lockRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  lockIconWrap: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  lockInfo: { flex: 1 },
+  lockLabel: { fontSize: 15, fontWeight: '600' },
+  lockSub: { fontSize: 13, marginTop: 2 },
+  lockActiveBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, borderRadius: 10, padding: 10, marginTop: 14 },
+  lockActiveText: { flex: 1, fontSize: 12, lineHeight: 18, fontWeight: '500' },
   emptyText: { fontSize: 14, textAlign: 'center', paddingVertical: 12 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   bottomSheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40 },
