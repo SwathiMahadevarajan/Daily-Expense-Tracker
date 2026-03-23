@@ -12,14 +12,25 @@ import {
   Modal,
   StatusBar,
   Share,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { Category, getCategories, addCategory, updateCategory, deleteCategory, createBackup, restoreBackup, BackupData, deleteTransactionsByMonth, deleteAllTransactions, getAvailableMonths } from '../../lib/database';
+import {
+  Category, getCategories, addCategory, updateCategory, deleteCategory,
+  createBackup, restoreBackup, BackupData,
+  deleteTransactionsByMonth, deleteAllTransactions, getAvailableMonths,
+  getSourceTransactionBalance,
+} from '../../lib/database';
 import { getPaymentSources, addPaymentSource, removePaymentSource } from '../../lib/paymentSources';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import CategoryForm from '../../components/CategoryForm';
 import { useTheme, setThemeMode, ThemeMode } from '../../lib/theme';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const REMINDER_KEY = 'evening_reminder';
 const STATUS_BAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0;
@@ -36,15 +47,86 @@ const EVENING_HOURS = [
   { label: '10:00 PM', hour: '22', minute: '00' },
 ];
 
+type BalanceMode = 'opening' | 'current';
+
 function getOpeningBalanceKey(source: string) {
   return `source_ob_${source}`;
 }
 
+function fmt(n: number): string {
+  return '₹' + Math.abs(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function AccordionSection({
+  title,
+  subtitle,
+  count,
+  open,
+  onToggle,
+  children,
+  colors,
+  rightElement,
+}: {
+  title: string;
+  subtitle?: string;
+  count?: number;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+  colors: any;
+  rightElement?: React.ReactNode;
+}) {
+  return (
+    <View style={[accordionStyles.wrapper, { backgroundColor: colors.card }]}>
+      <TouchableOpacity
+        style={accordionStyles.header}
+        onPress={onToggle}
+        activeOpacity={0.7}
+      >
+        <View style={accordionStyles.headerLeft}>
+          <Text style={[accordionStyles.headerTitle, { color: colors.text }]}>{title}</Text>
+          {subtitle && !open && (
+            <Text style={[accordionStyles.headerSub, { color: colors.textFaint }]}>{subtitle}</Text>
+          )}
+        </View>
+        <View style={accordionStyles.headerRight}>
+          {rightElement}
+          {count !== undefined && (
+            <View style={[accordionStyles.countBadge, { backgroundColor: colors.primaryBg }]}>
+              <Text style={[accordionStyles.countText, { color: colors.primary }]}>{count}</Text>
+            </View>
+          )}
+          <Feather name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textFaint} />
+        </View>
+      </TouchableOpacity>
+      {open && (
+        <View style={[accordionStyles.body, { borderTopColor: colors.border }]}>
+          {children}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const accordionStyles = StyleSheet.create({
+  wrapper: { borderRadius: 14, marginHorizontal: 12, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16 },
+  headerLeft: { flex: 1 },
+  headerTitle: { fontSize: 15, fontWeight: '700' },
+  headerSub: { fontSize: 12, marginTop: 2 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  countBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+  countText: { fontSize: 12, fontWeight: '700' },
+  body: { borderTopWidth: 1, paddingHorizontal: 16, paddingBottom: 16 },
+});
+
 export default function SettingsScreen() {
-  const { colors, dark, themeMode } = useTheme();
+  const { colors, themeMode } = useTheme();
   const [categories, setCategories] = useState<Category[]>([]);
   const [paymentSources, setPaymentSources] = useState<string[]>([]);
   const [openingBalances, setOpeningBalances] = useState<Record<string, string>>({});
+  const [currentBalanceInputs, setCurrentBalanceInputs] = useState<Record<string, string>>({});
+  const [balanceMode, setBalanceMode] = useState<BalanceMode>('opening');
   const [reminderEnabled, setReminderEnabled] = useState(false);
   const [reminderHour, setReminderHour] = useState('20');
   const [reminderMinute, setReminderMinute] = useState('00');
@@ -56,6 +138,16 @@ export default function SettingsScreen() {
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+    sources: true,
+    balances: true,
+    categories: false,
+  });
+
+  const toggleSection = (key: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const loadData = useCallback(async () => {
     try { setCategories(getCategories()); } catch {}
@@ -183,9 +275,7 @@ export default function SettingsScreen() {
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
+          text: 'Delete', style: 'destructive', onPress: () => {
             try { deleteCategory(cat.id); } catch {}
             setCategories(getCategories());
           },
@@ -207,26 +297,52 @@ export default function SettingsScreen() {
   const handleRemoveSource = async (source: string) => {
     Alert.alert('Remove Source', `Remove "${source}"?`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: async () => {
-        const updated = await removePaymentSource(source);
-        setPaymentSources(updated);
-        await AsyncStorage.removeItem(getOpeningBalanceKey(source));
-        const bals = { ...openingBalances };
-        delete bals[source];
-        setOpeningBalances(bals);
-      }},
+      {
+        text: 'Remove', style: 'destructive', onPress: async () => {
+          const updated = await removePaymentSource(source);
+          setPaymentSources(updated);
+          await AsyncStorage.removeItem(getOpeningBalanceKey(source));
+          const bals = { ...openingBalances };
+          delete bals[source];
+          setOpeningBalances(bals);
+        },
+      },
     ]);
   };
 
   const handleSaveOpeningBalance = async (source: string) => {
-    const val = openingBalances[source] ?? '';
-    const num = parseFloat(val);
-    if (val !== '' && (isNaN(num) || num < 0)) {
-      Alert.alert('Invalid Amount', 'Please enter a valid non-negative amount or leave blank for zero.');
-      return;
+    let obValue: number;
+    if (balanceMode === 'opening') {
+      const val = openingBalances[source] ?? '';
+      const num = parseFloat(val);
+      if (val !== '' && (isNaN(num) || num < 0)) {
+        Alert.alert('Invalid Amount', 'Please enter a valid non-negative amount.');
+        return;
+      }
+      obValue = isNaN(num) ? 0 : num;
+    } else {
+      const cbVal = currentBalanceInputs[source] ?? '';
+      const currentBalance = parseFloat(cbVal);
+      if (isNaN(currentBalance)) {
+        Alert.alert('Invalid Amount', 'Please enter your current account balance.');
+        return;
+      }
+      const txBal = getSourceTransactionBalance(source);
+      const netTx = txBal.credits - txBal.debits + txBal.transferIn - txBal.transferOut;
+      obValue = currentBalance - netTx;
     }
-    await AsyncStorage.setItem(getOpeningBalanceKey(source), val === '' ? '0' : val);
-    Alert.alert('Saved', `Opening balance for ${source} set to ₹${val === '' ? '0' : num.toFixed(2)}`);
+    await AsyncStorage.setItem(getOpeningBalanceKey(source), obValue.toString());
+    setOpeningBalances(prev => ({ ...prev, [source]: obValue.toString() }));
+    Alert.alert('Saved', `Opening balance for ${source} set to ${fmt(obValue)}.`);
+  };
+
+  const getComputedOpeningBalance = (source: string): number | null => {
+    const cbVal = currentBalanceInputs[source] ?? '';
+    const currentBalance = parseFloat(cbVal);
+    if (isNaN(currentBalance)) return null;
+    const txBal = getSourceTransactionBalance(source);
+    const netTx = txBal.credits - txBal.debits + txBal.transferIn - txBal.transferOut;
+    return currentBalance - netTx;
   };
 
   const handleDeleteByMonth = (month: string) => {
@@ -284,24 +400,18 @@ export default function SettingsScreen() {
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Appearance</Text>
-        <View style={[styles.card, { backgroundColor: colors.card }]}>
+        <View style={[styles.plainCard, { backgroundColor: colors.card }]}>
           <Text style={[styles.cardLabel, { color: colors.text }]}>Theme</Text>
           <Text style={[styles.cardSub, { color: colors.textMuted }]}>Choose how the app looks</Text>
           <View style={styles.themeRow}>
             {THEME_OPTIONS.map(opt => (
               <TouchableOpacity
                 key={opt.mode}
-                style={[
-                  styles.themeBtn,
-                  { backgroundColor: colors.cardAlt, borderColor: colors.border },
-                  themeMode === opt.mode && { backgroundColor: colors.primaryBg, borderColor: colors.primary },
-                ]}
+                style={[styles.themeBtn, { backgroundColor: colors.cardAlt, borderColor: colors.border }, themeMode === opt.mode && { backgroundColor: colors.primaryBg, borderColor: colors.primary }]}
                 onPress={() => setThemeMode(opt.mode)}
               >
                 <Feather name={opt.icon as any} size={18} color={themeMode === opt.mode ? colors.primary : colors.textMuted} />
-                <Text style={[styles.themeBtnText, { color: themeMode === opt.mode ? colors.primary : colors.textSub }]}>
-                  {opt.label}
-                </Text>
+                <Text style={[styles.themeBtnText, { color: themeMode === opt.mode ? colors.primary : colors.textSub }]}>{opt.label}</Text>
                 {themeMode === opt.mode && (
                   <View style={[styles.themeCheck, { backgroundColor: colors.primary }]}>
                     <Feather name="check" size={10} color="#FFFFFF" />
@@ -315,7 +425,14 @@ export default function SettingsScreen() {
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Payment Sources</Text>
-        <View style={[styles.card, { backgroundColor: colors.card }]}>
+        <AccordionSection
+          title="Your Accounts"
+          subtitle={paymentSources.length === 0 ? 'No sources added yet' : paymentSources.join(', ')}
+          count={paymentSources.length}
+          open={openSections.sources}
+          onToggle={() => toggleSection('sources')}
+          colors={colors}
+        >
           {paymentSources.length === 0 ? (
             <Text style={[styles.emptyText, { color: colors.textFaint }]}>No payment sources yet. Add one below.</Text>
           ) : (
@@ -344,45 +461,111 @@ export default function SettingsScreen() {
               <Feather name="plus" size={18} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
-        </View>
+        </AccordionSection>
       </View>
 
       {paymentSources.length > 0 && (
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Opening Balances</Text>
-          <View style={[styles.card, { backgroundColor: colors.card }]}>
-            <Text style={[styles.cardSub, { color: colors.textMuted }]}>
-              Set the balance each account had before you started tracking. Used to calculate current account balances in Analytics.
+          <AccordionSection
+            title="Account Balances"
+            subtitle="Tap to set starting or current balance"
+            open={openSections.balances}
+            onToggle={() => toggleSection('balances')}
+            colors={colors}
+          >
+            <View style={[styles.modeToggleWrap, { backgroundColor: colors.cardAlt }]}>
+              <TouchableOpacity
+                style={[styles.modeBtn, balanceMode === 'opening' && { backgroundColor: colors.card }]}
+                onPress={() => setBalanceMode('opening')}
+              >
+                <Feather name="rewind" size={13} color={balanceMode === 'opening' ? colors.primary : colors.textFaint} />
+                <Text style={[styles.modeBtnText, { color: balanceMode === 'opening' ? colors.primary : colors.textFaint }, balanceMode === 'opening' && { fontWeight: '700' }]}>
+                  Balance Before
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modeBtn, balanceMode === 'current' && { backgroundColor: colors.card }]}
+                onPress={() => setBalanceMode('current')}
+              >
+                <Feather name="clock" size={13} color={balanceMode === 'current' ? colors.primary : colors.textFaint} />
+                <Text style={[styles.modeBtnText, { color: balanceMode === 'current' ? colors.primary : colors.textFaint }, balanceMode === 'current' && { fontWeight: '700' }]}>
+                  Current Balance
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.modeHint, { color: colors.textFaint }]}>
+              {balanceMode === 'opening'
+                ? 'Enter the balance this account had before you started tracking expenses here.'
+                : 'Enter what the account shows right now — we\'ll work backwards to find the opening balance.'}
             </Text>
-            {paymentSources.map(source => (
-              <View key={source} style={[styles.obRow, { borderBottomColor: colors.divider }]}>
-                <View style={[styles.obIcon, { backgroundColor: colors.primaryBg }]}>
-                  <Feather name="credit-card" size={14} color={colors.primary} />
+
+            {paymentSources.map(source => {
+              const computedOb = balanceMode === 'current' ? getComputedOpeningBalance(source) : null;
+              const savedOb = parseFloat(openingBalances[source] ?? '0') || 0;
+              return (
+                <View key={source} style={[styles.obBlock, { borderBottomColor: colors.border }]}>
+                  <View style={styles.obHeaderRow}>
+                    <View style={[styles.obIcon, { backgroundColor: colors.primaryBg }]}>
+                      <Feather name="credit-card" size={13} color={colors.primary} />
+                    </View>
+                    <Text style={[styles.obSource, { color: colors.text }]}>{source}</Text>
+                    {openingBalances[source] ? (
+                      <Text style={[styles.obSaved, { color: colors.textFaint }]}>OB: {fmt(savedOb)}</Text>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.obInputRow}>
+                    <View style={[styles.obInputWrap, { backgroundColor: colors.inputBg, flex: 1 }]}>
+                      <Text style={[styles.obRupee, { color: colors.textFaint }]}>₹</Text>
+                      {balanceMode === 'opening' ? (
+                        <TextInput
+                          style={[styles.obInput, { color: colors.inputText }]}
+                          value={openingBalances[source] ?? ''}
+                          onChangeText={val => setOpeningBalances(prev => ({ ...prev, [source]: val }))}
+                          keyboardType="decimal-pad"
+                          placeholder="0.00"
+                          placeholderTextColor={colors.placeholder}
+                        />
+                      ) : (
+                        <TextInput
+                          style={[styles.obInput, { color: colors.inputText }]}
+                          value={currentBalanceInputs[source] ?? ''}
+                          onChangeText={val => setCurrentBalanceInputs(prev => ({ ...prev, [source]: val }))}
+                          keyboardType="decimal-pad"
+                          placeholder="Enter current balance"
+                          placeholderTextColor={colors.placeholder}
+                        />
+                      )}
+                    </View>
+                    <TouchableOpacity
+                      style={[styles.obSaveBtn, { backgroundColor: colors.primary }]}
+                      onPress={() => handleSaveOpeningBalance(source)}
+                    >
+                      <Feather name="check" size={15} color="#FFFFFF" />
+                      <Text style={styles.obSaveBtnText}>Save</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {balanceMode === 'current' && computedOb !== null && (
+                    <View style={[styles.computedRow, { backgroundColor: colors.primaryBg }]}>
+                      <Feather name="info" size={12} color={colors.primary} />
+                      <Text style={[styles.computedText, { color: colors.primary }]}>
+                        Opening balance will be set to {fmt(computedOb)}
+                      </Text>
+                    </View>
+                  )}
                 </View>
-                <Text style={[styles.obSource, { color: colors.text }]}>{source}</Text>
-                <View style={[styles.obInputWrap, { backgroundColor: colors.inputBg }]}>
-                  <Text style={[styles.obRupee, { color: colors.textFaint }]}>₹</Text>
-                  <TextInput
-                    style={[styles.obInput, { color: colors.inputText }]}
-                    value={openingBalances[source] ?? ''}
-                    onChangeText={val => setOpeningBalances(prev => ({ ...prev, [source]: val }))}
-                    keyboardType="decimal-pad"
-                    placeholder="0"
-                    placeholderTextColor={colors.placeholder}
-                  />
-                </View>
-                <TouchableOpacity style={[styles.obSaveBtn, { backgroundColor: colors.primaryBg }]} onPress={() => handleSaveOpeningBalance(source)}>
-                  <Feather name="check" size={16} color={colors.primary} />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
+              );
+            })}
+          </AccordionSection>
         </View>
       )}
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Data Management</Text>
-        <View style={[styles.card, { backgroundColor: colors.card }]}>
+        <View style={[styles.plainCard, { backgroundColor: colors.card }]}>
           <Text style={[styles.cardLabel, { color: colors.text }]}>Clear Data by Month</Text>
           <Text style={[styles.cardSub, { color: colors.textMuted }]}>
             Delete all transactions for a specific month. Use this to fix opening balances or remove test data. This cannot be undone.
@@ -417,7 +600,7 @@ export default function SettingsScreen() {
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Data Backup & Restore</Text>
-        <View style={[styles.card, { backgroundColor: colors.card }]}>
+        <View style={[styles.plainCard, { backgroundColor: colors.card }]}>
           <View style={styles.backupRow}>
             <View style={[styles.backupIconWrap, { backgroundColor: colors.primaryBg }]}>
               <Feather name="database" size={22} color={colors.primary} />
@@ -443,7 +626,7 @@ export default function SettingsScreen() {
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Evening Reminder</Text>
-        <View style={[styles.card, { backgroundColor: colors.card }]}>
+        <View style={[styles.plainCard, { backgroundColor: colors.card }]}>
           <View style={styles.reminderToggleRow}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.reminderLabel, { color: colors.text }]}>Daily Expense Reminder</Text>
@@ -482,25 +665,32 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.section}>
-        <View style={styles.sectionTitleRow}>
-          <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Categories</Text>
-          <TouchableOpacity
-            style={[styles.sectionAddBtn, { backgroundColor: colors.primaryBg }]}
-            onPress={() => { setShowNewCatForm(!showNewCatForm); setEditingCat(null); }}
-          >
-            <Feather name={showNewCatForm ? 'x' : 'plus'} size={14} color={colors.primary} />
-            <Text style={[styles.sectionAddText, { color: colors.primary }]}>{showNewCatForm ? 'Cancel' : 'Add'}</Text>
-          </TouchableOpacity>
-        </View>
-
-        {showNewCatForm && (
-          <View style={[styles.card, { backgroundColor: colors.card }]}>
-            <Text style={[styles.formHeading, { color: colors.text }]}>New Category</Text>
-            <CategoryForm onSave={handleAddCategory} onCancel={() => setShowNewCatForm(false)} saveLabel="Create Category" />
-          </View>
-        )}
-
-        <View style={[styles.card, { backgroundColor: colors.card }]}>
+        <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Categories</Text>
+        <AccordionSection
+          title="Spending Categories"
+          subtitle={`${categories.length} categories`}
+          count={categories.length}
+          open={openSections.categories}
+          onToggle={() => { toggleSection('categories'); setShowNewCatForm(false); setEditingCat(null); }}
+          colors={colors}
+          rightElement={
+            openSections.categories ? (
+              <TouchableOpacity
+                style={[styles.addCatBtn, { backgroundColor: colors.primaryBg }]}
+                onPress={() => { setShowNewCatForm(!showNewCatForm); setEditingCat(null); }}
+              >
+                <Feather name={showNewCatForm ? 'x' : 'plus'} size={13} color={colors.primary} />
+                <Text style={[styles.addCatBtnText, { color: colors.primary }]}>{showNewCatForm ? 'Cancel' : 'Add'}</Text>
+              </TouchableOpacity>
+            ) : undefined
+          }
+        >
+          {showNewCatForm && (
+            <View style={[styles.newCatBox, { backgroundColor: colors.cardAlt, borderColor: colors.primaryBorder }]}>
+              <Text style={[styles.formHeading, { color: colors.text }]}>New Category</Text>
+              <CategoryForm onSave={handleAddCategory} onCancel={() => setShowNewCatForm(false)} saveLabel="Create Category" />
+            </View>
+          )}
           {categories.map(cat => (
             <View key={cat.id}>
               {editingCat?.id === cat.id ? (
@@ -537,7 +727,7 @@ export default function SettingsScreen() {
               )}
             </View>
           ))}
-        </View>
+        </AccordionSection>
       </View>
 
       <View style={{ height: 60 }} />
@@ -552,7 +742,7 @@ export default function SettingsScreen() {
               style={[styles.jsonInput, { backgroundColor: colors.inputBg, color: colors.inputText, borderColor: colors.border }]}
               value={restoreJson}
               onChangeText={setRestoreJson}
-              placeholder='Paste backup JSON here...'
+              placeholder="Paste backup JSON here..."
               placeholderTextColor={colors.placeholder}
               multiline
               textAlignVertical="top"
@@ -576,30 +766,46 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   section: { marginBottom: 8 },
   sectionTitle: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
-  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 16, paddingTop: 16, paddingBottom: 8 },
-  sectionAddBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8 },
-  sectionAddText: { fontSize: 13, fontWeight: '600' },
-  card: { marginHorizontal: 12, borderRadius: 14, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
+  plainCard: { marginHorizontal: 12, borderRadius: 14, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 },
   cardLabel: { fontSize: 15, fontWeight: '600', marginBottom: 4 },
   cardSub: { fontSize: 13, marginBottom: 14, lineHeight: 18 },
   themeRow: { flexDirection: 'row', gap: 8 },
   themeBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderRadius: 12, gap: 6, borderWidth: 1.5, position: 'relative' },
   themeBtnText: { fontSize: 13, fontWeight: '600' },
   themeCheck: { position: 'absolute', top: 6, right: 6, width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  sourceItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, gap: 10 },
+  sourceItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 1, gap: 10 },
   sourceIcon: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   sourceName: { flex: 1, fontSize: 15, fontWeight: '500' },
   removeBtn: { padding: 8, borderRadius: 8 },
   addSourceRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
   sourceInput: { flex: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15 },
   addSourceBtn: { width: 44, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  obRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, gap: 10 },
-  obIcon: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  obSource: { flex: 1, fontSize: 14, fontWeight: '500' },
-  obInputWrap: { flexDirection: 'row', alignItems: 'center', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, gap: 4 },
+  modeToggleWrap: { flexDirection: 'row', borderRadius: 10, padding: 3, marginTop: 4, marginBottom: 10 },
+  modeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8, borderRadius: 8 },
+  modeBtnText: { fontSize: 13, fontWeight: '500' },
+  modeHint: { fontSize: 12, lineHeight: 18, marginBottom: 12 },
+  obBlock: { paddingVertical: 12, borderBottomWidth: 1 },
+  obHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  obIcon: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  obSource: { flex: 1, fontSize: 14, fontWeight: '600' },
+  obSaved: { fontSize: 12 },
+  obInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  obInputWrap: { flexDirection: 'row', alignItems: 'center', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 9, gap: 4 },
   obRupee: { fontSize: 14, fontWeight: '600' },
-  obInput: { fontSize: 14, fontWeight: '600', minWidth: 60, maxWidth: 90 },
-  obSaveBtn: { padding: 8, borderRadius: 8 },
+  obInput: { flex: 1, fontSize: 14, fontWeight: '600', minWidth: 60 },
+  obSaveBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
+  obSaveBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  computedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, marginTop: 8 },
+  computedText: { fontSize: 12, fontWeight: '500', flex: 1 },
+  dmEmpty: { borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 12 },
+  dmEmptyText: { fontSize: 13 },
+  monthRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 1, gap: 10 },
+  monthIcon: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  monthLabel: { flex: 1, fontSize: 14, fontWeight: '500' },
+  monthDeleteBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8 },
+  monthDeleteText: { fontSize: 13, fontWeight: '600' },
+  deleteAllBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 14, paddingVertical: 12, borderRadius: 10, borderWidth: 1.5 },
+  deleteAllText: { fontSize: 14, fontWeight: '700' },
   backupRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 14 },
   backupIconWrap: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   backupInfo: { flex: 1 },
@@ -617,9 +823,12 @@ const styles = StyleSheet.create({
   timeChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   timeChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20 },
   timeChipText: { fontSize: 13, fontWeight: '500' },
+  addCatBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
+  addCatBtnText: { fontSize: 12, fontWeight: '600' },
+  newCatBox: { borderRadius: 12, padding: 12, marginBottom: 10, borderWidth: 1 },
   formHeading: { fontSize: 15, fontWeight: '700', marginBottom: 14 },
   catEditBox: { borderRadius: 12, padding: 12, marginVertical: 6, borderWidth: 1 },
-  catRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, gap: 10 },
+  catRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 1, gap: 10 },
   catIcon: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   catName: { flex: 1, fontSize: 14, fontWeight: '500' },
   builtInBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
@@ -627,15 +836,6 @@ const styles = StyleSheet.create({
   catActions: { flexDirection: 'row', gap: 6 },
   catActionBtn: { padding: 7, borderRadius: 8 },
   emptyText: { fontSize: 14, textAlign: 'center', paddingVertical: 12 },
-  dmEmpty: { borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 12 },
-  dmEmptyText: { fontSize: 13 },
-  monthRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 1, gap: 10 },
-  monthIcon: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  monthLabel: { flex: 1, fontSize: 14, fontWeight: '500' },
-  monthDeleteBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8 },
-  monthDeleteText: { fontSize: 13, fontWeight: '600' },
-  deleteAllBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 14, paddingVertical: 12, borderRadius: 10, borderWidth: 1.5 },
-  deleteAllText: { fontSize: 14, fontWeight: '700' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   bottomSheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40 },
   bottomSheetHandle: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
