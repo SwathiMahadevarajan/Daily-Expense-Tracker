@@ -55,9 +55,11 @@ export default function SettingsScreen() {
   const [restoreJson, setRestoreJson] = useState('');
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [availableMonths, setAvailableMonths] = useState<string[]>([]);
 
   const loadData = useCallback(async () => {
     try { setCategories(getCategories()); } catch {}
+    try { setAvailableMonths(getAvailableMonths()); } catch {}
     try {
       const sources = await getPaymentSources();
       setPaymentSources(sources);
@@ -227,6 +229,50 @@ export default function SettingsScreen() {
     Alert.alert('Saved', `Opening balance for ${source} set to ₹${val === '' ? '0' : num.toFixed(2)}`);
   };
 
+  const handleDeleteByMonth = (month: string) => {
+    const label = new Date(month + '-01').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    Alert.alert(
+      `Clear ${label}`,
+      `This will permanently delete all transactions recorded in ${label}. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete', style: 'destructive', onPress: () => {
+            deleteTransactionsByMonth(month);
+            setAvailableMonths(getAvailableMonths());
+            Alert.alert('Done', `All transactions for ${label} have been deleted.`);
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteAll = () => {
+    Alert.alert(
+      'Delete All Transactions',
+      'This will permanently erase ALL your transaction history. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All', style: 'destructive', onPress: () => {
+            Alert.alert('Are you absolutely sure?', 'All data will be lost permanently.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Yes, Delete Everything', style: 'destructive', onPress: () => {
+                    deleteAllTransactions();
+                    setAvailableMonths([]);
+                    Alert.alert('Cleared', 'All transactions have been deleted.');
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
+
   const THEME_OPTIONS: { mode: ThemeMode; label: string; icon: string }[] = [
     { mode: 'light', label: 'Light', icon: 'sun' },
     { mode: 'dark', label: 'Dark', icon: 'moon' },
@@ -333,6 +379,41 @@ export default function SettingsScreen() {
           </View>
         </View>
       )}
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Data Management</Text>
+        <View style={[styles.card, { backgroundColor: colors.card }]}>
+          <Text style={[styles.cardLabel, { color: colors.text }]}>Clear Data by Month</Text>
+          <Text style={[styles.cardSub, { color: colors.textMuted }]}>
+            Delete all transactions for a specific month. Use this to fix opening balances or remove test data. This cannot be undone.
+          </Text>
+          {availableMonths.length === 0 ? (
+            <View style={[styles.dmEmpty, { backgroundColor: colors.cardAlt }]}>
+              <Text style={[styles.dmEmptyText, { color: colors.textFaint }]}>No transactions recorded yet.</Text>
+            </View>
+          ) : (
+            availableMonths.map(month => {
+              const label = new Date(month + '-01').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+              return (
+                <View key={month} style={[styles.monthRow, { borderBottomColor: colors.border }]}>
+                  <View style={[styles.monthIcon, { backgroundColor: colors.warningBg }]}>
+                    <Feather name="calendar" size={14} color={colors.warning} />
+                  </View>
+                  <Text style={[styles.monthLabel, { color: colors.text }]}>{label}</Text>
+                  <TouchableOpacity style={[styles.monthDeleteBtn, { backgroundColor: colors.dangerBg }]} onPress={() => handleDeleteByMonth(month)}>
+                    <Feather name="trash-2" size={14} color={colors.danger} />
+                    <Text style={[styles.monthDeleteText, { color: colors.danger }]}>Clear</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })
+          )}
+          <TouchableOpacity style={[styles.deleteAllBtn, { borderColor: colors.danger }]} onPress={handleDeleteAll}>
+            <Feather name="alert-triangle" size={15} color={colors.danger} />
+            <Text style={[styles.deleteAllText, { color: colors.danger }]}>Delete All Transactions</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Data Backup & Restore</Text>
@@ -546,6 +627,15 @@ const styles = StyleSheet.create({
   catActions: { flexDirection: 'row', gap: 6 },
   catActionBtn: { padding: 7, borderRadius: 8 },
   emptyText: { fontSize: 14, textAlign: 'center', paddingVertical: 12 },
+  dmEmpty: { borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 12 },
+  dmEmptyText: { fontSize: 13 },
+  monthRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 1, gap: 10 },
+  monthIcon: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  monthLabel: { flex: 1, fontSize: 14, fontWeight: '500' },
+  monthDeleteBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8 },
+  monthDeleteText: { fontSize: 13, fontWeight: '600' },
+  deleteAllBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 14, paddingVertical: 12, borderRadius: 10, borderWidth: 1.5 },
+  deleteAllText: { fontSize: 14, fontWeight: '700' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   bottomSheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40 },
   bottomSheetHandle: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },

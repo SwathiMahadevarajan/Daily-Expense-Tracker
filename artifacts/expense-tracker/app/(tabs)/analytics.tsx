@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   TextInput,
   Alert,
+  Share,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
@@ -108,6 +109,24 @@ export default function AnalyticsScreen() {
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
+  const handleShareSummary = async () => {
+    const net = summary.received - summary.spent;
+    const topCat = breakdown[0]?.category ?? 'N/A';
+    const lines = [
+      `📊 ${monthLabel} Summary`,
+      `━━━━━━━━━━━━━━━━`,
+      `💸 Spent:    ₹${summary.spent.toLocaleString('en-IN')}`,
+      `💰 Received: ₹${summary.received.toLocaleString('en-IN')}`,
+      `📈 Net:      ${net >= 0 ? '+' : ''}₹${net.toLocaleString('en-IN')}`,
+      budget ? `🎯 Budget:   ₹${budget.toLocaleString('en-IN')} (${budgetPct.toFixed(0)}% used)` : null,
+      `🏆 Top Category: ${topCat}`,
+      `📋 Transactions: ${summary.count}`,
+      `━━━━━━━━━━━━━━━━`,
+      `via Expense Tracker`,
+    ].filter(Boolean).join('\n');
+    try { await Share.share({ message: lines }); } catch {}
+  };
+
   const navigateMonth = (dir: number) => {
     let m = month + dir; let y = year;
     if (m > 12) { m = 1; y++; }
@@ -150,6 +169,9 @@ export default function AnalyticsScreen() {
         <Text style={[styles.monthLabel, { color: colors.text }]}>{monthLabel}</Text>
         <TouchableOpacity onPress={() => navigateMonth(1)} style={styles.navBtn} disabled={monthKey >= currentMonthKey}>
           <Feather name="chevron-right" size={22} color={monthKey >= currentMonthKey ? colors.textFaint : colors.primary} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleShareSummary} style={[styles.navBtn, { marginLeft: 4 }]}>
+          <Feather name="share-2" size={18} color={colors.textSub} />
         </TouchableOpacity>
       </View>
 

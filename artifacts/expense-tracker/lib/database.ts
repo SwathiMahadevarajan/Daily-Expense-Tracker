@@ -266,7 +266,11 @@ export function bulkUpdateTransactionBank(ids: number[], bank: string) {
 export function getImportedSmsIds(): Set<string> {
   if (Platform.OS === 'web') return new Set(webStore.importedSmsIds);
   const db = getDb();
-  const rows = db.getAllSync(`SELECT smsId FROM sms_import_log`) as { smsId: string }[];
+  const rows = db.getAllSync(
+    `SELECT smsId FROM sms_import_log
+     UNION
+     SELECT smsId FROM transactions WHERE smsId IS NOT NULL`
+  ) as { smsId: string }[];
   return new Set(rows.map(r => r.smsId));
 }
 
