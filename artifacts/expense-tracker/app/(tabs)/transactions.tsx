@@ -3,13 +3,14 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
+  FlatList,
   TouchableOpacity,
   TextInput,
   Alert,
   Share,
   Platform,
   Modal,
+  ScrollView,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
@@ -208,80 +209,85 @@ export default function TransactionsScreen() {
         </View>
       )}
 
-      <ScrollView style={styles.list}>
-        {filtered.length === 0 ? (
+      <FlatList
+        style={styles.list}
+        data={filtered}
+        keyExtractor={tx => tx.id.toString()}
+        contentContainerStyle={filtered.length === 0 ? styles.emptyContainer : { paddingBottom: 32 }}
+        removeClippedSubviews
+        maxToRenderPerBatch={20}
+        windowSize={10}
+        initialNumToRender={30}
+        ListEmptyComponent={
           <View style={styles.emptyState}>
             <Feather name="inbox" size={40} color={colors.textFaint} />
             <Text style={[styles.emptyText, { color: colors.textFaint }]}>No transactions found</Text>
           </View>
-        ) : (
-          filtered.map(tx => {
-            const isBulkSelected = selectedIds.has(tx.id);
-            const isTransfer = !!(tx.transfer_to);
-            return (
-              <TouchableOpacity
-                key={tx.id}
-                style={[
-                  styles.txItem,
-                  { backgroundColor: colors.card },
-                  !bulkMode && selectedTx?.id === tx.id && { borderColor: colors.primary, backgroundColor: colors.primaryBg },
-                  bulkMode && isBulkSelected && { borderColor: colors.primary, backgroundColor: colors.primaryBg },
-                ]}
-                onPress={() => {
-                  if (bulkMode) { toggleBulkSelect(tx.id); }
-                  else { setSelectedTx(selectedTx?.id === tx.id ? null : tx); }
-                }}
-                onLongPress={() => { if (!bulkMode) enterBulkMode(tx.id); }}
-                delayLongPress={350}
-                activeOpacity={0.7}
-              >
-                {bulkMode && (
-                  <View style={[styles.bulkCheckbox, { borderColor: colors.border }, isBulkSelected && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
-                    {isBulkSelected && <Feather name="check" size={12} color="#FFFFFF" />}
-                  </View>
-                )}
-                <View style={[styles.txIcon, {
-                  backgroundColor: isTransfer ? colors.cardAlt : tx.type === 'credit' ? colors.successBg : colors.dangerBg
-                }]}>
-                  <Feather
-                    name={isTransfer ? 'repeat' : tx.type === 'credit' ? 'arrow-down-left' : 'arrow-up-right'}
-                    size={16}
-                    color={isTransfer ? colors.textMuted : tx.type === 'credit' ? colors.success : colors.danger}
-                  />
+        }
+        renderItem={({ item: tx }) => {
+          const isBulkSelected = selectedIds.has(tx.id);
+          const isTransfer = !!(tx.transfer_to);
+          return (
+            <TouchableOpacity
+              style={[
+                styles.txItem,
+                { backgroundColor: colors.card },
+                !bulkMode && selectedTx?.id === tx.id && { borderColor: colors.primary, backgroundColor: colors.primaryBg },
+                bulkMode && isBulkSelected && { borderColor: colors.primary, backgroundColor: colors.primaryBg },
+              ]}
+              onPress={() => {
+                if (bulkMode) { toggleBulkSelect(tx.id); }
+                else { setSelectedTx(selectedTx?.id === tx.id ? null : tx); }
+              }}
+              onLongPress={() => { if (!bulkMode) enterBulkMode(tx.id); }}
+              delayLongPress={350}
+              activeOpacity={0.7}
+            >
+              {bulkMode && (
+                <View style={[styles.bulkCheckbox, { borderColor: colors.border }, isBulkSelected && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
+                  {isBulkSelected && <Feather name="check" size={12} color="#FFFFFF" />}
                 </View>
-                <View style={styles.txDetails}>
-                  <Text style={[styles.txDescription, { color: colors.text }]} numberOfLines={1}>{tx.description || tx.category}</Text>
-                  <Text style={[styles.txMeta, { color: colors.textFaint }]}>
-                    {formatDateDisplay(tx.date)} •{' '}
-                    {isTransfer ? `${tx.bank} → ${tx.transfer_to}` : `${tx.category}${tx.bank ? ` • ${tx.bank}` : ''}`}
-                    {tx.smsId ? ' • SMS' : ''}
-                  </Text>
-                </View>
-                <Text style={[styles.txAmount, { color: isTransfer ? colors.textMuted : tx.type === 'credit' ? colors.success : colors.danger }]}>
-                  {isTransfer ? '' : tx.type === 'credit' ? '+' : '-'}{formatCurrency(tx.amount)}
+              )}
+              <View style={[styles.txIcon, {
+                backgroundColor: isTransfer ? colors.cardAlt : tx.type === 'credit' ? colors.successBg : colors.dangerBg
+              }]}>
+                <Feather
+                  name={isTransfer ? 'repeat' : tx.type === 'credit' ? 'arrow-down-left' : 'arrow-up-right'}
+                  size={16}
+                  color={isTransfer ? colors.textMuted : tx.type === 'credit' ? colors.success : colors.danger}
+                />
+              </View>
+              <View style={styles.txDetails}>
+                <Text style={[styles.txDescription, { color: colors.text }]} numberOfLines={1}>{tx.description || tx.category}</Text>
+                <Text style={[styles.txMeta, { color: colors.textFaint }]}>
+                  {formatDateDisplay(tx.date)} •{' '}
+                  {isTransfer ? `${tx.bank} → ${tx.transfer_to}` : `${tx.category}${tx.bank ? ` • ${tx.bank}` : ''}`}
+                  {tx.smsId ? ' • SMS' : ''}
                 </Text>
-                {!bulkMode && selectedTx?.id === tx.id && (
-                  <View style={styles.txActions}>
-                    <TouchableOpacity
-                      style={[styles.txActionBtn, { backgroundColor: colors.primaryBg }]}
-                      onPress={() => { setEditTx(tx); setSelectedTx(null); setModalVisible(true); }}
-                    >
-                      <Feather name="edit-2" size={15} color={colors.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.txActionBtn, { backgroundColor: colors.dangerBg }]}
-                      onPress={() => handleDelete(tx)}
-                    >
-                      <Feather name="trash-2" size={15} color={colors.danger} />
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </TouchableOpacity>
-            );
-          })
-        )}
-        <View style={{ height: 32 }} />
-      </ScrollView>
+              </View>
+              <Text style={[styles.txAmount, { color: isTransfer ? colors.textMuted : tx.type === 'credit' ? colors.success : colors.danger }]}>
+                {isTransfer ? '' : tx.type === 'credit' ? '+' : '-'}{formatCurrency(tx.amount)}
+              </Text>
+              {!bulkMode && selectedTx?.id === tx.id && (
+                <View style={styles.txActions}>
+                  <TouchableOpacity
+                    style={[styles.txActionBtn, { backgroundColor: colors.primaryBg }]}
+                    onPress={() => { setEditTx(tx); setSelectedTx(null); setModalVisible(true); }}
+                  >
+                    <Feather name="edit-2" size={15} color={colors.primary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.txActionBtn, { backgroundColor: colors.dangerBg }]}
+                    onPress={() => handleDelete(tx)}
+                  >
+                    <Feather name="trash-2" size={15} color={colors.danger} />
+                  </TouchableOpacity>
+                </View>
+              )}
+            </TouchableOpacity>
+          );
+        }}
+      />
 
       <AddTransactionModal
         visible={modalVisible}
@@ -358,6 +364,7 @@ const styles = StyleSheet.create({
   txAmount: { fontSize: 15, fontWeight: '700', marginLeft: 8 },
   txActions: { flexDirection: 'row', gap: 6, marginLeft: 8 },
   txActionBtn: { padding: 8, borderRadius: 8 },
+  emptyContainer: { flex: 1 },
   emptyState: { alignItems: 'center', paddingTop: 60 },
   emptyText: { marginTop: 12, fontSize: 15 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },

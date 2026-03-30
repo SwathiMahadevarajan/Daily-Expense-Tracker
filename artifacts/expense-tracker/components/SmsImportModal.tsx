@@ -15,7 +15,7 @@ import {
 import { Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { parseSmsMessage, processSmsChunk, ParsedSmsTransaction } from '../lib/smsParser';
-import { getImportedSmsIds, bulkInsertSmsTransactions, recordImportedSmsIds } from '../lib/database';
+import { getImportedSmsIds, bulkInsertSmsTransactions, recordImportedSmsIds, applyCategoryRules } from '../lib/database';
 import { readSms, getSmsAndroidModule } from '../lib/smsAndroid';
 import { useTheme } from '../lib/theme';
 
@@ -164,7 +164,7 @@ export default function SmsImportModal({ visible, onClose, onImportComplete }: P
       .map(r => ({
         amount: r.amount,
         type: r.type,
-        category: r.type === 'credit' ? 'Income' : 'Other',
+        category: applyCategoryRules(r.description) ?? (r.type === 'credit' ? 'Income' : 'Other'),
         description: r.description,
         note: '',
         date: r.date,

@@ -38,11 +38,19 @@ export const DEFAULT_CATEGORIES: Omit<Category, 'id'>[] = [
 
 let db: any = null;
 
+export interface CategoryRule {
+  id: number;
+  pattern: string;
+  category: string;
+}
+
 const webStore = {
   transactions: [] as Transaction[],
   categories: DEFAULT_CATEGORIES.map((c, i) => ({ ...c, id: i + 1 })) as Category[],
+  categoryRules: [] as CategoryRule[],
   nextTxId: 1,
   nextCatId: DEFAULT_CATEGORIES.length + 1,
+  nextRuleId: 1,
   importedSmsIds: new Set<string>(),
 };
 
@@ -88,6 +96,12 @@ export function initializeDatabase() {
       importedAt TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS category_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pattern TEXT NOT NULL,
+      category TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions(date);
     CREATE INDEX IF NOT EXISTS idx_tx_type ON transactions(type);
     CREATE INDEX IF NOT EXISTS idx_tx_date_type ON transactions(date, type);
@@ -106,6 +120,15 @@ function migrateDatabase(db: any) {
       CREATE TABLE IF NOT EXISTS sms_import_log (
         smsId TEXT PRIMARY KEY,
         importedAt TEXT NOT NULL
+      );
+    `);
+  } catch {}
+  try {
+    db.execSync(`
+      CREATE TABLE IF NOT EXISTS category_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pattern TEXT NOT NULL,
+        category TEXT NOT NULL
       );
     `);
   } catch {}
@@ -345,6 +368,41 @@ export function updateCategory(id: number, cat: Pick<Category, 'name' | 'icon' |
   db.runSync(`UPDATE categories SET name=?, icon=?, color=? WHERE id=?`, [cat.name, cat.icon, cat.color, id]);
 }
 
+export function getCategoryRules(): CategoryRule[] {
+  if (Platform.OS === 'web') return [...webStore.categoryRules];
+  const db = getDb();
+  return db.getAllSync(`SELECT id, pattern, category FROM category_rules ORDER BY id ASC`) as CategoryRule[];
+}
+
+export function addCategoryRule(pattern: string, category: string): number {
+  if (Platform.OS === 'web') {
+    const rule: CategoryRule = { id: webStore.nextRuleId++, pattern, category };
+    webStore.categoryRules.push(rule);
+    return rule.id;
+  }
+  const db = getDb();
+  const result = db.runSync(`INSERT INTO category_rules (pattern, category) VALUES (?, ?)`, [pattern, category]);
+  return result.lastInsertRowId;
+}
+
+export function deleteCategoryRule(id: number) {
+  if (Platform.OS === 'web') {
+    webStore.categoryRules = webStore.categoryRules.filter(r => r.id !== id);
+    return;
+  }
+  const db = getDb();
+  db.runSync(`DELETE FROM category_rules WHERE id=?`, [id]);
+}
+
+export function applyCategoryRules(description: string): string | null {
+  const rules = getCategoryRules();
+  const lower = description.toLowerCase();
+  for (const rule of rules) {
+    if (lower.includes(rule.pattern.toLowerCase())) return rule.category;
+  }
+  return null;
+}
+
 export function deleteCategory(id: number) {
   if (Platform.OS === 'web') {
     webStore.categories = webStore.categories.filter(c => c.id !== id);
@@ -395,6 +453,21 @@ export function getCategoryBreakdown(month: string): { category: string; total: 
      GROUP BY category ORDER BY total DESC`,
     [`${month}%`]
   ) as { category: string; total: number; count: number }[];
+}
+
+export function getCategoryTransactions(month: string, category: string): Transaction[] {
+  if (Platform.OS === 'web') {
+    return webStore.transactions
+      .filter(t => t.date.startsWith(month) && t.category === category && t.type === 'debit' && !t.transfer_to)
+      .sort((a, b) => b.amount - a.amount);
+  }
+  const db = getDb();
+  return db.getAllSync(
+    `SELECT id, amount, type, category, description, note, date, bank, smsId, transfer_to
+     FROM transactions WHERE date LIKE ? AND category=? AND type='debit' AND transfer_to IS NULL
+     ORDER BY amount DESC`,
+    [`${month}%`, category]
+  ) as Transaction[];
 }
 
 export interface MonthlyTrendPoint {

@@ -8,6 +8,9 @@ import {
   TextInput,
   Alert,
   Share,
+  Modal,
+  FlatList,
+  SafeAreaView,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
@@ -15,6 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getMonthSummary,
   getCategoryBreakdown,
+  getCategoryTransactions,
   getCategories,
   getMonthlyTrend,
   getTopTransactions,
@@ -23,6 +27,7 @@ import {
   MonthlyTrendPoint,
   TopTransaction,
   DayOfWeekStat,
+  Transaction,
 } from '../../lib/database';
 import { getPaymentSources } from '../../lib/paymentSources';
 import { useTheme } from '../../lib/theme';
@@ -66,6 +71,8 @@ export default function AnalyticsScreen() {
   const [trend, setTrend] = useState<MonthlyTrendPoint[]>([]);
   const [topExpenses, setTopExpenses] = useState<TopTransaction[]>([]);
   const [dayStats, setDayStats] = useState<DayOfWeekStat[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [categoryTxns, setCategoryTxns] = useState<Transaction[]>([]);
 
   const monthKey = getMonthKey(year, month);
   const prevMonth = month === 1 ? 12 : month - 1;
@@ -288,15 +295,24 @@ export default function AnalyticsScreen() {
 
             <View style={[styles.card, { backgroundColor: colors.card }]}>
               <Text style={[styles.cardTitle, { color: colors.text }]}>Spending by Category</Text>
+              <Text style={[styles.cardSub, { color: colors.textFaint }]}>Tap a category to see transactions</Text>
               {breakdown.length === 0 ? (
                 <View style={styles.empty}><Feather name="pie-chart" size={28} color={colors.textFaint} /><Text style={[styles.emptyText, { color: colors.textFaint }]}>No spending this month</Text></View>
               ) : (
-                breakdown.slice(0, 8).map((item) => {
+                breakdown.map((item) => {
                   const pct = (item.total / maxBreakdown) * 100;
                   const totalPct = summary.spent > 0 ? (item.total / summary.spent) * 100 : 0;
                   const color = categoryColors[item.category] || colors.primary;
                   return (
-                    <View key={item.category} style={styles.catRow}>
+                    <TouchableOpacity
+                      key={item.category}
+                      style={styles.catRow}
+                      onPress={() => {
+                        setSelectedCategory(item.category);
+                        setCategoryTxns(getCategoryTransactions(monthKey, item.category));
+                      }}
+                      activeOpacity={0.7}
+                    >
                       <View style={[styles.catDot, { backgroundColor: color }]} />
                       <Text style={[styles.catName, { color: colors.textSub }]} numberOfLines={1}>{item.category}</Text>
                       <Text style={[styles.catPct, { color: colors.textMuted }]}>{totalPct.toFixed(0)}%</Text>
@@ -306,7 +322,8 @@ export default function AnalyticsScreen() {
                         </View>
                       </View>
                       <Text style={[styles.catAmount, { color: colors.text }]}>{fmtMoney(item.total, true)}</Text>
-                    </View>
+                      <Feather name="chevron-right" size={14} color={colors.textFaint} />
+                    </TouchableOpacity>
                   );
                 })
               )}
@@ -415,6 +432,55 @@ export default function AnalyticsScreen() {
 
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      <Modal
+        visible={selectedCategory !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setSelectedCategory(null)}
+      >
+        <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.bg }]}>
+          <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+            <View style={styles.modalTitleRow}>
+              <View style={[styles.catDot, { backgroundColor: categoryColors[selectedCategory ?? ''] || colors.primary, width: 12, height: 12, borderRadius: 6 }]} />
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{selectedCategory}</Text>
+            </View>
+            <View style={styles.modalMeta}>
+              <Text style={[styles.modalMetaText, { color: colors.textFaint }]}>
+                {categoryTxns.length} transaction{categoryTxns.length !== 1 ? 's' : ''} · {fmtMoney(categoryTxns.reduce((s, t) => s + t.amount, 0))}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => setSelectedCategory(null)} style={styles.modalClose}>
+              <Feather name="x" size={22} color={colors.textSub} />
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={categoryTxns}
+            keyExtractor={(t) => t.id.toString()}
+            contentContainerStyle={styles.modalList}
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Feather name="inbox" size={28} color={colors.textFaint} />
+                <Text style={[styles.emptyText, { color: colors.textFaint }]}>No transactions</Text>
+              </View>
+            }
+            renderItem={({ item: tx, index }) => (
+              <View style={[styles.modalTxRow, { backgroundColor: colors.card, borderBottomColor: colors.border, borderBottomWidth: index < categoryTxns.length - 1 ? 1 : 0 }]}>
+                <View style={styles.modalTxInfo}>
+                  <Text style={[styles.modalTxDesc, { color: colors.text }]} numberOfLines={1}>
+                    {tx.description || tx.category}
+                  </Text>
+                  <Text style={[styles.modalTxMeta, { color: colors.textFaint }]}>
+                    {tx.date}{tx.bank ? ` · ${tx.bank}` : ''}
+                  </Text>
+                  {tx.note ? <Text style={[styles.modalTxNote, { color: colors.textFaint }]} numberOfLines={1}>{tx.note}</Text> : null}
+                </View>
+                <Text style={[styles.modalTxAmount, { color: colors.danger }]}>{fmtMoney(tx.amount)}</Text>
+              </View>
+            )}
+          />
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 }
@@ -500,4 +566,18 @@ const styles = StyleSheet.create({
   legendText: { fontSize: 12 },
   empty: { alignItems: 'center', paddingVertical: 20, gap: 8 },
   emptyText: { fontSize: 14 },
+  modalContainer: { flex: 1 },
+  modalHeader: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 14, borderBottomWidth: 1 },
+  modalTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
+  modalTitle: { fontSize: 20, fontWeight: '800' },
+  modalMeta: { marginBottom: 12 },
+  modalMetaText: { fontSize: 13 },
+  modalClose: { position: 'absolute', top: 16, right: 18, padding: 4 },
+  modalList: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 32 },
+  modalTxRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 12, marginBottom: 0 },
+  modalTxInfo: { flex: 1 },
+  modalTxDesc: { fontSize: 14, fontWeight: '600', marginBottom: 3 },
+  modalTxMeta: { fontSize: 12 },
+  modalTxNote: { fontSize: 12, marginTop: 2, fontStyle: 'italic' },
+  modalTxAmount: { fontSize: 15, fontWeight: '700' },
 });

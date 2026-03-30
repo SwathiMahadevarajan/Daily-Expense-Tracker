@@ -59,13 +59,14 @@ export default function RootLayout() {
 
   if (!ready) return null;
 
+  if (isLocked && lockEnabled && Platform.OS !== 'web') {
+    return <AppLock onUnlock={handleUnlock} />;
+  }
+
   return (
     <>
       <Stack screenOptions={{ headerShown: false }} />
       <StatusBar style="light" backgroundColor="#6366F1" translucent={false} />
-      {isLocked && lockEnabled && Platform.OS !== 'web' && (
-        <AppLock onUnlock={handleUnlock} />
-      )}
     </>
   );
 }

@@ -19,6 +19,7 @@ import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import {
   Category, getCategories, addCategory, updateCategory, deleteCategory,
+  CategoryRule, getCategoryRules, addCategoryRule, deleteCategoryRule,
   createBackup, restoreBackup, BackupData,
   deleteTransactionsByMonth, deleteAllTransactions, getAvailableMonths,
   getSourceTransactionBalance,
@@ -140,10 +141,14 @@ export default function SettingsScreen() {
   const [restoring, setRestoring] = useState(false);
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
   const [lockEnabled, setLockEnabled] = useState(false);
+  const [rules, setRules] = useState<CategoryRule[]>([]);
+  const [newRulePattern, setNewRulePattern] = useState('');
+  const [newRuleCategory, setNewRuleCategory] = useState('');
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
-    sources: true,
-    balances: true,
+    sources: false,
+    balances: false,
     categories: false,
+    rules: false,
   });
 
   const toggleSection = (key: string) => {
@@ -153,6 +158,7 @@ export default function SettingsScreen() {
 
   const loadData = useCallback(async () => {
     try { setCategories(getCategories()); } catch {}
+    try { setRules(getCategoryRules()); } catch {}
     try { setAvailableMonths(getAvailableMonths()); } catch {}
     try {
       const lv = await AsyncStorage.getItem(LOCK_ENABLED_KEY);
@@ -375,6 +381,23 @@ export default function SettingsScreen() {
     await AsyncStorage.setItem(LOCK_ENABLED_KEY, enable ? 'true' : 'false');
     setLockEnabled(enable);
     if (!enable) Alert.alert('App Lock Disabled', 'The app will no longer ask for authentication when opened.');
+  };
+
+  const handleAddRule = () => {
+    const pattern = newRulePattern.trim();
+    const category = newRuleCategory.trim();
+    if (!pattern || !category) { Alert.alert('Missing Fields', 'Enter both a keyword and a category.'); return; }
+    addCategoryRule(pattern, category);
+    setRules(getCategoryRules());
+    setNewRulePattern('');
+    setNewRuleCategory('');
+  };
+
+  const handleDeleteRule = (rule: CategoryRule) => {
+    Alert.alert('Delete Rule', `Remove rule: "${rule.pattern}" → ${rule.category}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => { deleteCategoryRule(rule.id); setRules(getCategoryRules()); } },
+    ]);
   };
 
   const handleDeleteByMonth = (month: string) => {
@@ -798,6 +821,71 @@ export default function SettingsScreen() {
         </AccordionSection>
       </View>
 
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.textFaint }]}>Auto-Category Rules</Text>
+        <AccordionSection
+          title="Keyword Rules"
+          subtitle={rules.length === 0 ? 'No rules yet — tap to add' : `${rules.length} rule${rules.length !== 1 ? 's' : ''} active`}
+          count={rules.length > 0 ? rules.length : undefined}
+          open={openSections.rules}
+          onToggle={() => toggleSection('rules')}
+          colors={colors}
+        >
+          <Text style={[styles.cardSub, { color: colors.textMuted, marginTop: 8 }]}>
+            When a transaction description contains the keyword, it's automatically assigned that category on SMS import.
+          </Text>
+          {rules.length === 0 ? (
+            <Text style={[styles.emptyText, { color: colors.textFaint }]}>No rules yet. Add one below.</Text>
+          ) : (
+            rules.map(rule => (
+              <View key={rule.id} style={[styles.ruleRow, { borderBottomColor: colors.divider }]}>
+                <View style={[styles.rulePatternBadge, { backgroundColor: colors.primaryBg }]}>
+                  <Text style={[styles.rulePatternText, { color: colors.primary }]}>{rule.pattern}</Text>
+                </View>
+                <Feather name="arrow-right" size={13} color={colors.textFaint} style={{ marginHorizontal: 6 }} />
+                <Text style={[styles.ruleCategoryText, { color: colors.text }]} numberOfLines={1}>{rule.category}</Text>
+                <TouchableOpacity style={[styles.catActionBtn, { backgroundColor: colors.dangerBg, marginLeft: 'auto' }]} onPress={() => handleDeleteRule(rule)}>
+                  <Feather name="trash-2" size={14} color={colors.danger} />
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
+          <View style={[styles.ruleAddBox, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+            <Text style={[styles.ruleAddLabel, { color: colors.textSub }]}>New Rule</Text>
+            <TextInput
+              style={[styles.ruleInput, { backgroundColor: colors.inputBg, color: colors.inputText }]}
+              value={newRulePattern}
+              onChangeText={setNewRulePattern}
+              placeholder="Keyword (e.g. Zomato, Amazon)"
+              placeholderTextColor={colors.placeholder}
+            />
+            <Text style={[styles.ruleArrow, { color: colors.textFaint }]}>→ Category</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.ruleCatScroll} contentContainerStyle={styles.ruleCatChips}>
+              {categories.map(cat => {
+                const selected = newRuleCategory === cat.name;
+                return (
+                  <TouchableOpacity
+                    key={cat.id}
+                    style={[styles.ruleCatChip, { backgroundColor: selected ? colors.primary : colors.cardAlt, borderColor: selected ? colors.primary : colors.border }]}
+                    onPress={() => setNewRuleCategory(cat.name)}
+                  >
+                    <View style={[styles.ruleCatDot, { backgroundColor: selected ? '#FFFFFF' : (cat.color || '#6B7280') }]} />
+                    <Text style={[styles.ruleCatChipText, { color: selected ? '#FFFFFF' : colors.textSub }]}>{cat.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <TouchableOpacity
+              style={[styles.addSourceBtn, { backgroundColor: newRulePattern && newRuleCategory ? colors.primary : colors.cardAlt, marginTop: 10 }]}
+              onPress={handleAddRule}
+            >
+              <Feather name="plus" size={16} color={newRulePattern && newRuleCategory ? '#FFFFFF' : colors.textFaint} />
+              <Text style={[styles.addRuleBtnText, { color: newRulePattern && newRuleCategory ? '#FFFFFF' : colors.textFaint }]}>Add Rule</Text>
+            </TouchableOpacity>
+          </View>
+        </AccordionSection>
+      </View>
+
       <View style={{ height: 60 }} />
 
       <Modal visible={showRestoreModal} animationType="slide" transparent onRequestClose={() => setShowRestoreModal(false)}>
@@ -920,4 +1008,18 @@ const styles = StyleSheet.create({
   bottomSheetBtns: { flexDirection: 'row', gap: 10 },
   bottomSheetBtn: { flex: 1, padding: 14, borderRadius: 12, alignItems: 'center' },
   bottomSheetBtnText: { fontSize: 15, fontWeight: '700' },
+  ruleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 1 },
+  rulePatternBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  rulePatternText: { fontSize: 13, fontWeight: '700' },
+  ruleCategoryText: { flex: 1, fontSize: 13, fontWeight: '500' },
+  ruleAddBox: { borderRadius: 12, padding: 12, marginTop: 10, borderWidth: 1 },
+  ruleAddLabel: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8 },
+  ruleInput: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, marginBottom: 10 },
+  ruleArrow: { fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
+  ruleCatScroll: { flexGrow: 0, marginBottom: 4 },
+  ruleCatChips: { flexDirection: 'row', gap: 6, paddingBottom: 4 },
+  ruleCatChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, borderWidth: 1 },
+  ruleCatDot: { width: 7, height: 7, borderRadius: 3.5 },
+  ruleCatChipText: { fontSize: 12, fontWeight: '500' },
+  addRuleBtnText: { fontSize: 14, fontWeight: '700' },
 });

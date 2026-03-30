@@ -16,9 +16,23 @@ export interface RawSms {
 }
 
 const BANK_SENDER_FRAGMENTS: { fragment: string; name: string }[] = [
+  // Credit cards first (more specific — must match before the bank variants)
+  { fragment: 'AXISCC', name: 'Axis Credit Card' },
+  { fragment: 'HDFCCC', name: 'HDFC Credit Card' },
+  { fragment: 'HDFCCR', name: 'HDFC Credit Card' },
+  { fragment: 'ICICIC', name: 'ICICI Credit Card' },
+  { fragment: 'SBICRD', name: 'SBI Credit Card' },
+  { fragment: 'SBCARD', name: 'SBI Credit Card' },
+  { fragment: 'SBICC', name: 'SBI Credit Card' },
+  { fragment: 'KOTAKC', name: 'Kotak Credit Card' },
+  { fragment: 'INDUSCC', name: 'IndusInd Credit Card' },
+  { fragment: 'YESCC', name: 'Yes Credit Card' },
+  { fragment: 'RBLCC', name: 'RBL Credit Card' },
+  { fragment: 'IDFCCC', name: 'IDFC Credit Card' },
+  { fragment: 'AMEXIN', name: 'Amex India' },
+  // Debit / savings accounts
   { fragment: 'AXISBK', name: 'Axis Bank' },
   { fragment: 'AXISNB', name: 'Axis Bank' },
-  { fragment: 'AXISCC', name: 'Axis Credit Card' },
   { fragment: 'SBIINB', name: 'SBI' },
   { fragment: 'CBSSBI', name: 'SBI' },
   { fragment: 'SBIUPI', name: 'SBI' },
@@ -171,13 +185,28 @@ function parseBank(address: string, body: string): string {
   }
 
   const lowerBody = body.toLowerCase();
+  // More specific patterns first — credit cards before generic bank names
   const bodyBankMap: [string, string][] = [
-    ['indian bank', 'Indian Bank'],
+    ['axis credit card', 'Axis Credit Card'],
+    ['axis credit', 'Axis Credit Card'],
+    ['hdfc credit card', 'HDFC Credit Card'],
+    ['hdfc credit', 'HDFC Credit Card'],
+    ['icici credit card', 'ICICI Credit Card'],
+    ['icici credit', 'ICICI Credit Card'],
+    ['sbi credit card', 'SBI Credit Card'],
+    ['sbi card', 'SBI Credit Card'],
+    ['kotak credit card', 'Kotak Credit Card'],
+    ['kotak credit', 'Kotak Credit Card'],
+    ['indusind credit', 'IndusInd Credit Card'],
+    ['yes credit', 'Yes Credit Card'],
+    ['rbl credit', 'RBL Credit Card'],
+    ['idfc credit', 'IDFC Credit Card'],
+    // Generic bank names after credit-card variants
     ['indian overseas', 'Indian Overseas Bank'],
+    ['indian bank', 'Indian Bank'],
     ['hdfc', 'HDFC Bank'],
     ['icici', 'ICICI Bank'],
     ['axis bank', 'Axis Bank'],
-    ['axis credit', 'Axis Credit Card'],
     ['kotak', 'Kotak Bank'],
     ['state bank', 'SBI'],
     [' sbi', 'SBI'],
