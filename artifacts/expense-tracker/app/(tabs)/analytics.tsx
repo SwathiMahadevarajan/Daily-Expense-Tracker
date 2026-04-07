@@ -31,6 +31,7 @@ import {
 } from '../../lib/database';
 import { getPaymentSources } from '../../lib/paymentSources';
 import { useTheme } from '../../lib/theme';
+import CategoryInsightsModal from '../../components/CategoryInsightsModal';
 
 function fmtMoney(n: number, compact = false): string {
   if (compact) {
@@ -73,6 +74,8 @@ export default function AnalyticsScreen() {
   const [dayStats, setDayStats] = useState<DayOfWeekStat[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [categoryTxns, setCategoryTxns] = useState<Transaction[]>([]);
+  const [insightsCategory, setInsightsCategory] = useState<string | null>(null);
+  const [insightsCategoryColor, setInsightsCategoryColor] = useState('#6366F1');
 
   const monthKey = getMonthKey(year, month);
   const prevMonth = month === 1 ? 12 : month - 1;
@@ -295,7 +298,7 @@ export default function AnalyticsScreen() {
 
             <View style={[styles.card, { backgroundColor: colors.card }]}>
               <Text style={[styles.cardTitle, { color: colors.text }]}>Spending by Category</Text>
-              <Text style={[styles.cardSub, { color: colors.textFaint }]}>Tap a category to see transactions</Text>
+              <Text style={[styles.cardSub, { color: colors.textFaint }]}>Tap row for transactions · chart icon for trends</Text>
               {breakdown.length === 0 ? (
                 <View style={styles.empty}><Feather name="pie-chart" size={28} color={colors.textFaint} /><Text style={[styles.emptyText, { color: colors.textFaint }]}>No spending this month</Text></View>
               ) : (
@@ -304,26 +307,37 @@ export default function AnalyticsScreen() {
                   const totalPct = summary.spent > 0 ? (item.total / summary.spent) * 100 : 0;
                   const color = categoryColors[item.category] || colors.primary;
                   return (
-                    <TouchableOpacity
-                      key={item.category}
-                      style={styles.catRow}
-                      onPress={() => {
-                        setSelectedCategory(item.category);
-                        setCategoryTxns(getCategoryTransactions(monthKey, item.category));
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[styles.catDot, { backgroundColor: color }]} />
-                      <Text style={[styles.catName, { color: colors.textSub }]} numberOfLines={1}>{item.category}</Text>
-                      <Text style={[styles.catPct, { color: colors.textMuted }]}>{totalPct.toFixed(0)}%</Text>
-                      <View style={styles.catBarWrap}>
-                        <View style={[styles.catBarBg, { backgroundColor: colors.cardAlt }]}>
-                          <View style={[styles.catBarFill, { width: `${pct}%`, backgroundColor: color }]} />
+                    <View key={item.category} style={styles.catRow}>
+                      <TouchableOpacity
+                        style={styles.catRowMain}
+                        onPress={() => {
+                          setSelectedCategory(item.category);
+                          setCategoryTxns(getCategoryTransactions(monthKey, item.category));
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.catDot, { backgroundColor: color }]} />
+                        <Text style={[styles.catName, { color: colors.textSub }]} numberOfLines={1}>{item.category}</Text>
+                        <Text style={[styles.catPct, { color: colors.textMuted }]}>{totalPct.toFixed(0)}%</Text>
+                        <View style={styles.catBarWrap}>
+                          <View style={[styles.catBarBg, { backgroundColor: colors.cardAlt }]}>
+                            <View style={[styles.catBarFill, { width: `${pct}%`, backgroundColor: color }]} />
+                          </View>
                         </View>
-                      </View>
-                      <Text style={[styles.catAmount, { color: colors.text }]}>{fmtMoney(item.total, true)}</Text>
-                      <Feather name="chevron-right" size={14} color={colors.textFaint} />
-                    </TouchableOpacity>
+                        <Text style={[styles.catAmount, { color: colors.text }]}>{fmtMoney(item.total, true)}</Text>
+                        <Feather name="chevron-right" size={14} color={colors.textFaint} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.insightsBtn, { backgroundColor: colors.cardAlt }]}
+                        onPress={() => {
+                          setInsightsCategoryColor(color);
+                          setInsightsCategory(item.category);
+                        }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Feather name="bar-chart-2" size={14} color={colors.primary} />
+                      </TouchableOpacity>
+                    </View>
                   );
                 })
               )}
@@ -433,6 +447,12 @@ export default function AnalyticsScreen() {
         <View style={{ height: 32 }} />
       </ScrollView>
 
+      <CategoryInsightsModal
+        category={insightsCategory}
+        categoryColor={insightsCategoryColor}
+        onClose={() => setInsightsCategory(null)}
+      />
+
       <Modal
         visible={selectedCategory !== null}
         animationType="slide"
@@ -530,6 +550,8 @@ const styles = StyleSheet.create({
   budgetEmpty: { paddingVertical: 12 },
   budgetEmptyText: { fontSize: 13, textAlign: 'center' },
   catRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 6 },
+  catRowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  insightsBtn: { padding: 6, borderRadius: 8, marginLeft: 2 },
   catDot: { width: 8, height: 8, borderRadius: 4 },
   catName: { width: 90, fontSize: 13, fontWeight: '500' },
   catPct: { width: 30, fontSize: 12, textAlign: 'right' },

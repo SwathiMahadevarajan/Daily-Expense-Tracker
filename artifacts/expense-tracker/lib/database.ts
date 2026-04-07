@@ -701,6 +701,73 @@ export function createBackup(): BackupData {
   };
 }
 
+export interface CategoryTrendPoint {
+  month: string;
+  label: string;
+  total: number;
+  count: number;
+}
+
+export function getCategoryMonthlyTrend(category: string, numMonths: number = 6): CategoryTrendPoint[] {
+  const points: CategoryTrendPoint[] = [];
+  const now = new Date();
+  for (let i = numMonths - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const label = d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+    if (Platform.OS === 'web') {
+      const txs = webStore.transactions.filter(
+        t => t.date.startsWith(month) && t.category === category && t.type === 'debit' && !t.transfer_to
+      );
+      points.push({ month, label, total: txs.reduce((s, t) => s + t.amount, 0), count: txs.length });
+    } else {
+      const db = getDb();
+      const row = db.getFirstSync(
+        `SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count
+         FROM transactions WHERE date LIKE ? AND category=? AND type='debit' AND transfer_to IS NULL`,
+        [`${month}%`, category]
+      ) as { total: number; count: number } | null;
+      points.push({ month, label, ...(row ?? { total: 0, count: 0 }) });
+    }
+  }
+  return points;
+}
+
+export interface CategoryMerchant {
+  description: string;
+  total: number;
+  count: number;
+}
+
+export function getCategoryTopMerchants(category: string, numMonths: number = 3): CategoryMerchant[] {
+  const now = new Date();
+  const fromDate = new Date(now.getFullYear(), now.getMonth() - numMonths + 1, 1);
+  const fromMonth = `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, '0')}-01`;
+  if (Platform.OS === 'web') {
+    const txs = webStore.transactions.filter(
+      t => t.date >= fromMonth && t.category === category && t.type === 'debit' && !t.transfer_to && t.description
+    );
+    const map: Record<string, { total: number; count: number }> = {};
+    for (const t of txs) {
+      if (!map[t.description]) map[t.description] = { total: 0, count: 0 };
+      map[t.description].total += t.amount;
+      map[t.description].count++;
+    }
+    return Object.entries(map)
+      .map(([description, v]) => ({ description, ...v }))
+      .sort((a, b) => b.count - a.count || b.total - a.total)
+      .slice(0, 5);
+  }
+  const db = getDb();
+  return db.getAllSync(
+    `SELECT description, SUM(amount) as total, COUNT(*) as count
+     FROM transactions
+     WHERE date >= ? AND category=? AND type='debit' AND transfer_to IS NULL AND description != ''
+     GROUP BY description ORDER BY count DESC, total DESC LIMIT 5`,
+    [fromMonth, category]
+  ) as CategoryMerchant[];
+}
+
 export function restoreBackup(data: BackupData): { inserted: number; skipped: number; errors: string[] } {
   let inserted = 0;
   let skipped = 0;
