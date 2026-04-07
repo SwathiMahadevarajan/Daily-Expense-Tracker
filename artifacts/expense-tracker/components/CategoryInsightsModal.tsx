@@ -67,7 +67,7 @@ export default function CategoryInsightsModal({ category, categoryColor, onClose
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.bg }]}>
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.card }]}>
         {/* Header */}
         <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
           <View style={[styles.catDot, { backgroundColor: categoryColor }]} />
@@ -271,6 +271,8 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     borderBottomWidth: 1,
     gap: 12,
+    zIndex: 10,
+    elevation: 3,
   },
   catDot: { width: 14, height: 14, borderRadius: 7, flexShrink: 0 },
   headerText: { flex: 1 },

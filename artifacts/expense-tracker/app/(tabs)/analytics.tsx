@@ -459,7 +459,7 @@ export default function AnalyticsScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setSelectedCategory(null)}
       >
-        <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.bg }]}>
+        <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.card }]}>
           <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
             <View style={styles.modalTitleRow}>
               <View style={[styles.catDot, { backgroundColor: categoryColors[selectedCategory ?? ''] || colors.primary, width: 12, height: 12, borderRadius: 6 }]} />
@@ -589,7 +589,7 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', paddingVertical: 20, gap: 8 },
   emptyText: { fontSize: 14 },
   modalContainer: { flex: 1 },
-  modalHeader: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 14, borderBottomWidth: 1 },
+  modalHeader: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 14, borderBottomWidth: 1, zIndex: 10, elevation: 3 },
   modalTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
   modalTitle: { fontSize: 20, fontWeight: '800' },
   modalMeta: { marginBottom: 12 },

@@ -7,7 +7,7 @@ import { initializeDatabase } from '../lib/database';
 import AppLock from '../components/AppLock';
 
 const LOCK_ENABLED_KEY = 'app_lock_enabled';
-const LOCK_AFTER_MS = 3000;
+const LOCK_AFTER_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function RootLayout() {
   const [lockEnabled, setLockEnabled] = useState(false);
