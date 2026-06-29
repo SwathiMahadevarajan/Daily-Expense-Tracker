@@ -14,6 +14,7 @@ import {
   Share,
   LayoutAnimation,
   UIManager,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
