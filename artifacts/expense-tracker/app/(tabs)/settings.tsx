@@ -888,32 +888,89 @@ export default function SettingsScreen() {
 
       <View style={{ height: 60 }} />
 
-      <Modal visible={showRestoreModal} animationType="slide" transparent onRequestClose={() => setShowRestoreModal(false)}>
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowRestoreModal(false)}>
-          <View style={[styles.bottomSheet, { backgroundColor: colors.card }]} onStartShouldSetResponder={() => true}>
-            <View style={[styles.bottomSheetHandle, { backgroundColor: colors.border }]} />
-            <Text style={[styles.bottomSheetTitle, { color: colors.text }]}>Restore from Backup</Text>
-            <Text style={[styles.bottomSheetSub, { color: colors.textMuted }]}>Paste your backup JSON below. Existing transactions are kept — duplicates are skipped.</Text>
-            <TextInput
-              style={[styles.jsonInput, { backgroundColor: colors.inputBg, color: colors.inputText, borderColor: colors.border }]}
-              value={restoreJson}
-              onChangeText={setRestoreJson}
-              placeholder="Paste backup JSON here..."
-              placeholderTextColor={colors.placeholder}
-              multiline
-              textAlignVertical="top"
-            />
-            <View style={styles.bottomSheetBtns}>
-              <TouchableOpacity style={[styles.bottomSheetBtn, { backgroundColor: colors.cardAlt }]} onPress={() => setShowRestoreModal(false)}>
-                <Text style={[styles.bottomSheetBtnText, { color: colors.textSub }]}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.bottomSheetBtn, { backgroundColor: colors.primary }]} onPress={confirmRestore} disabled={restoring}>
-                <Text style={[styles.bottomSheetBtnText, { color: '#FFFFFF' }]}>{restoring ? 'Restoring...' : 'Restore'}</Text>
-              </TouchableOpacity>
-            </View>
+<Modal
+  visible={showRestoreModal}
+  animationType="slide"
+  transparent
+  onRequestClose={() => setShowRestoreModal(false)}
+>
+  <TouchableOpacity
+    style={styles.modalOverlay}
+    activeOpacity={1}
+    onPress={() => setShowRestoreModal(false)}
+  >
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={{ width: '100%', justifyContent: 'flex-end' }}
+    >
+      <View
+        style={[
+          styles.bottomSheet,
+          {
+            backgroundColor: colors.card,
+            maxHeight: '85%',
+          },
+        ]}
+        onStartShouldSetResponder={() => true}
+      >
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={[styles.bottomSheetHandle, { backgroundColor: colors.border }]} />
+
+          <Text style={[styles.bottomSheetTitle, { color: colors.text }]}>
+            Restore from Backup
+          </Text>
+
+          <Text style={[styles.bottomSheetSub, { color: colors.textMuted }]}>
+            Paste your backup JSON below. Existing transactions are kept — duplicates are skipped.
+          </Text>
+
+          <TextInput
+            style={[
+              styles.jsonInput,
+              {
+                backgroundColor: colors.inputBg,
+                color: colors.inputText,
+                borderColor: colors.border,
+                maxHeight: 300,
+              },
+            ]}
+            value={restoreJson}
+            onChangeText={setRestoreJson}
+            placeholder="Paste backup JSON here..."
+            placeholderTextColor={colors.placeholder}
+            multiline
+            scrollEnabled
+            textAlignVertical="top"
+          />
+
+          <View style={styles.bottomSheetBtns}>
+            <TouchableOpacity
+              style={[styles.bottomSheetBtn, { backgroundColor: colors.cardAlt }]}
+              onPress={() => setShowRestoreModal(false)}
+            >
+              <Text style={[styles.bottomSheetBtnText, { color: colors.textSub }]}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.bottomSheetBtn, { backgroundColor: colors.primary }]}
+              onPress={confirmRestore}
+              disabled={restoring}
+            >
+              <Text style={[styles.bottomSheetBtnText, { color: '#FFFFFF' }]}>
+                {restoring ? 'Restoring...' : 'Restore'}
+              </Text>
+            </TouchableOpacity>
           </View>
-        </TouchableOpacity>
-      </Modal>
+        </ScrollView>
+      </View>
+    </KeyboardAvoidingView>
+  </TouchableOpacity>
+</Modal>
     </ScrollView>
   );
 }
